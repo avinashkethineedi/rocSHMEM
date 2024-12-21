@@ -90,7 +90,7 @@ include(ROCMCheckTargetIds)
 ###############################################################################
 rocm_setup_version(VERSION 2.0.0)
 
-project(rocshmem CXX)
+project(rocshmem VERSION 2.0.0 LANGUAGES CXX)
 
 ###############################################################################
 # SET GPU ARCHITECTURES
