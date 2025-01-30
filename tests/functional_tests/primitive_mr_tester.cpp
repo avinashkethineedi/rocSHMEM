@@ -29,17 +29,17 @@ using namespace rocshmem;
 /******************************************************************************
  * DEVICE TEST KERNEL
  *****************************************************************************/
-__global__ void PrimitiveMRTest(int loop, uint64_t *timer, char *s_buf,
-                                char *r_buf, int size,
-                                ShmemContextType ctx_type) {
+__global__ void PrimitiveMRTest(int loop, uint64_t *start_time,
+                                uint64_t *end_time, char *s_buf, char *r_buf,
+                                int size, ShmemContextType ctx_type) {
   __shared__ rocshmem_ctx_t ctx;
   rocshmem_wg_init();
   rocshmem_wg_ctx_create(ctx_type, &ctx);
+  int wg_id = get_flat_grid_id();
 
   if (hipThreadIdx_x == 0) {
-    uint64_t start;
 
-    start = rocshmem_timer();
+    start_time[wg_id] = wall_clock64();
 
     for (int win_i = 0; win_i < 64 * loop; win_i++) {
       for (int i = 0; i < 64; i++) {
@@ -48,7 +48,7 @@ __global__ void PrimitiveMRTest(int loop, uint64_t *timer, char *s_buf,
       rocshmem_ctx_quiet(ctx);
     }
 
-    timer[hipBlockIdx_x] = rocshmem_timer() - start;
+    end_time[wg_id] = wall_clock64();
   }
 
   __syncthreads();
@@ -63,6 +63,12 @@ __global__ void PrimitiveMRTest(int loop, uint64_t *timer, char *s_buf,
 PrimitiveMRTester::PrimitiveMRTester(TesterArguments args) : Tester(args) {
   s_buf = (char *)rocshmem_malloc(args.max_msg_size * args.wg_size);
   r_buf = (char *)rocshmem_malloc(args.max_msg_size * args.wg_size);
+
+  if (s_buf == nullptr || r_buf == nullptr) {
+    std::cout << "Error allocating memory from symmetric heap" << std::endl;
+    std::cout << "source: " << s_buf << ", dest: " << r_buf << std::endl;
+    rocshmem_global_exit(1);
+  }
 }
 
 PrimitiveMRTester::~PrimitiveMRTester() {
@@ -80,12 +86,14 @@ void PrimitiveMRTester::launchKernel(dim3 gridSize, dim3 blockSize, int loop,
   size_t shared_bytes = 0;
 
   /* Warmup */
-  hipLaunchKernelGGL(PrimitiveMRTest, gridSize, blockSize, shared_bytes, stream,
-                     loop, timer, s_buf, r_buf, size, _shmem_context);
+  hipLaunchKernelGGL(PrimitiveMRTest, gridSize, blockSize, shared_bytes,
+                     stream, loop, start_time, end_time, s_buf, r_buf, size,
+                     _shmem_context);
 
   /* Benchmark */
-  hipLaunchKernelGGL(PrimitiveMRTest, gridSize, blockSize, shared_bytes, stream,
-                     loop, timer, s_buf, r_buf, size, _shmem_context);
+  hipLaunchKernelGGL(PrimitiveMRTest, gridSize, blockSize, shared_bytes,
+                     stream, loop, start_time, end_time, s_buf, r_buf, size,
+                     _shmem_context);
 
   CHECK_HIP(hipDeviceSynchronize());
 
@@ -102,8 +110,8 @@ void PrimitiveMRTester::verifyResults(uint64_t size) {
   if (args.myid == check_id) {
     for (uint64_t i = 0; i < size; i++) {
       if (r_buf[i] != '0') {
-        fprintf(stderr, "Data validation error at idx %lu\n", i);
-        fprintf(stderr, "Got %c, Expected %c\n", r_buf[i], '0');
+        std::cerr << "Data validation error at idx " << i << std::endl;
+        std::cerr << "Got " << r_buf[i] << ", Expected 0" << std::endl;
         exit(-1);
       }
     }

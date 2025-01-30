@@ -49,6 +49,11 @@ __global__ void ShmemPtrTest(char *r_buf, int *available) {
 ShmemPtrTester::ShmemPtrTester(TesterArguments args) : Tester(args) {
   CHECK_HIP(hipMalloc((void **)&_available, sizeof(int)));
   r_buf = (char *)rocshmem_malloc(args.max_msg_size);
+  if (r_buf == nullptr) {
+    std::cout << "Error allocating memory from symmetric heap" << std::endl;
+    std::cout << "dest: " << r_buf << std::endl;
+    rocshmem_global_exit(1);
+  }
 }
 
 ShmemPtrTester::~ShmemPtrTester() {
@@ -75,12 +80,14 @@ void ShmemPtrTester::launchKernel(dim3 gridSize, dim3 blockSize, int loop,
 void ShmemPtrTester::verifyResults(uint64_t size) {
   if (args.myid == 0) {
     if (*_available == 0) {
-      fprintf(stderr, "SHMEM_PTR NOT AVAILBLE \n");
+      std::cerr << "SHMEM_PTR NOT AVAILABLE" << std::endl;
+      exit(-1);
     }
   } else {
     if (r_buf[4] != '1') {
-      fprintf(stderr, "Data validation error \n");
-      fprintf(stderr, "Got %c, Expected %c\n", r_buf[4], '1');
+      std::cerr << "Data validation error" << std::endl;
+      std::cerr << "Got " << r_buf[4] << ", Expected 1" << std::endl;
+      exit(-1);
     }
   }
 }
