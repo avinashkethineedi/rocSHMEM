@@ -22,7 +22,7 @@ cmake \
     -DUSE_COHERENT_HEAP=ON \
     -DUSE_MANAGED_HEAP=OFF \
     -DUSE_RO=ON \
-    -DUSE_IPC=ON \
+    -DUSE_IPC=OFF \
     -DUSE_THREADS=ON \
     -DUSE_WF_COAL=OFF \
     $src_path

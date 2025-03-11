@@ -126,7 +126,7 @@ ExecTest() {
   CMD+=" > $LOG_DIR/$TEST_LOG_NAME.log"
 
   # Run Test
-  echo $TEST_LOG_NAME
+  echo "$TEST_LOG_NAME $(date)"
   eval $CMD
 
   # Validate Test
@@ -137,6 +137,18 @@ ExecTest() {
   fi
 
   unset ROCSHMEM_MAX_NUM_CONTEXTS
+}
+
+TestEx() {
+  ##############################################################################
+  #       | Name             | Ranks | Workgroups | Threads | Max Message Size #
+  ##############################################################################
+  ExecTest  "put"              2       1            1         1048576
+  ExecTest  "put"              2       1            1024      512
+  ExecTest  "put"              2       8            1         1048576
+  ExecTest  "put"              2       16           128       8
+  ExecTest  "put"              2       32           256       512
+  ExecTest  "put"              2       64           1024      8
 }
 
 TestRMA() {
@@ -363,6 +375,9 @@ case $TEST in
     TestSigOps
     TestColl
     TestOther
+    ;;
+  *"test")
+    TestEx
     ;;
   *"rma")
     TestRMA
