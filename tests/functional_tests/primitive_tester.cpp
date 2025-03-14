@@ -35,6 +35,7 @@ __global__ void PrimitiveTest(int loop, int skip, long long int *start_time,
                               ShmemContextType ctx_type) {
   __shared__ rocshmem_ctx_t ctx;
   int wg_id = get_flat_grid_id();
+  int t_id = get_flat_id();
   rocshmem_wg_init();
   rocshmem_wg_ctx_create(ctx_type, &ctx);
 
@@ -52,6 +53,7 @@ __global__ void PrimitiveTest(int loop, int skip, long long int *start_time,
         rocshmem_ctx_getmem_nbi(ctx, r_buf, s_buf, size, 1);
         break;
       case PutTestType:
+        // printf("t_id: %d, i: %d, size: %d\n", t_id, i, size);
         rocshmem_ctx_putmem(ctx, r_buf, s_buf, size, 1);
         break;
       case PutNBITestType:

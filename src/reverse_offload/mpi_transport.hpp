@@ -228,6 +228,14 @@ private:
   std::thread progress_thread{};
 
   std::array<int, 128> testsome_indices;
+
+  int processed_msgs = 0;
+
+  int requested_msgs = 0;
+
+  int req_quiet = 0;
+
+  int process_quiet = 0;
 };
 
 }  // namespace rocshmem

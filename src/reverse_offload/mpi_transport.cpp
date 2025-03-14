@@ -122,6 +122,7 @@ void MPITransport::submitRequestsToMPI() {
               next_element.src, next_element.ol1.size, next_element.PE);
       break;
     case RO_NET_PUT_NBI:
+      requested_msgs++;
       putMem(next_element.dst, next_element.src, next_element.ol1.size,
              next_element.PE, next_element.ro_net_win_id, queue_idx,
              next_element.status, false);
@@ -1122,6 +1123,7 @@ std::unique_ptr<MPI_Request[]> MPITransport::raw_requests() {
 }
 
 void MPITransport::progress() {
+  // printf("-------------------\n");
   if (requests.size() == 0) {
     const int tag{1000};
     int flag{0};
@@ -1140,6 +1142,7 @@ void MPITransport::progress() {
     NET_CHECK(MPI_Testsome(incount, uptr_req_arr.get(), &outcount,
                            testsome_indices.data(), MPI_STATUSES_IGNORE));
 
+    processed_msgs += outcount;
     auto *bp{backend_proxy->get()};
     for (int i{0}; i < outcount; i++) {
       int index{testsome_indices[i]};
@@ -1172,6 +1175,7 @@ void MPITransport::progress() {
           DPRINTF("Finished Quiet for contextId %d at status addr %p\n", contextId,
                   status);
           queue->notify(status);
+          process_quiet++;
         }
 
         waiting_quiet[contextId].clear();
@@ -1179,6 +1183,13 @@ void MPITransport::progress() {
         queue->sfence_flush_hdp();
       }
     }
+
+    // printf("in_count: %d, out_count: %d, requested_msgs: %d,\n"
+    //   "processed_msgs: %d, outstanding (ctx 0): %d, quiet_req: %zu,\n"
+    //   "quiets: %d | %d\n",
+    //   incount, outcount, requested_msgs, processed_msgs,
+    //   outstanding[0], waiting_quiet[0].size(),
+    //   req_quiet, process_quiet);
 
     sort(testsome_indices.data(), testsome_indices.data() + outcount,
          std::greater<int>());
@@ -1190,12 +1201,15 @@ void MPITransport::progress() {
 }
 
 void MPITransport::quiet(int contextId, volatile char *status) {
+  req_quiet++;
   auto *bp{backend_proxy->get()};
 
   if (!outstanding[contextId]) {
     DPRINTF("Finished Quiet immediately for contextId %d at status addr %p\n",
             contextId, status);
     queue->notify(status);
+    process_quiet++;
+    // printf("process quiet: %d, context: %d (%d)\n", process_quiet, contextId, *status);
   } else {
     waiting_quiet[contextId].emplace_back(status);
   }

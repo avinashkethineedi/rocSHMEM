@@ -54,13 +54,13 @@ class HIPAllocatorFinegrained : public MemoryAllocator {
                         hipDeviceMallocFinegrained) {}
 };
 
-#ifdef HIP_SUPPORTS_MALLOC_UNCACHED
 class HIPAllocatorUncached : public MemoryAllocator {
- public:
-  HIPAllocatorUncached()
-      : MemoryAllocator(hipExtMallocWithFlags, hipFree,
-                        hipDeviceMallocUncached) {}
-};
+  public:
+   HIPAllocatorUncached()
+       : MemoryAllocator(hipExtMallocWithFlags, hipFree,
+                         hipDeviceMallocUncached) {}
+ };
+#ifdef HIP_SUPPORTS_MALLOC_UNCACHED
 // The default fine-grained coherence allocator is the uncached allocator
 using HIPDefaultFinegrainedAllocator = HIPAllocatorUncached;
 #else

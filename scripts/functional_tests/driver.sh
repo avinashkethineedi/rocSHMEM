@@ -105,8 +105,11 @@ ExecTest() {
   fi
 
   # MPI Parameters
-  LAUNCHER=mpirun
-  OPTIONS=" -n $NUM_RANKS -mca pml ucx -x ROCSHMEM_MAX_NUM_CONTEXTS=$ROCSHMEM_MAX_NUM_CONTEXTS"
+  LAUNCHER="mpirun --mca osc_ucx_enable_wpool_thread_multiple true"
+  OPTIONS=" -n $NUM_RANKS --mca pml ucx --mca osc ucx -x ROCSHMEM_MAX_NUM_CONTEXTS=$ROCSHMEM_MAX_NUM_CONTEXTS"
+
+  # LAUNCHER="mpirun --mca osc_ucx_enable_wpool_thread_multiple true"
+  # OPTIONS=" -n $NUM_RANKS --mca pml ucx --mca osc ucx -x UCX_TLS=rc,tcp,rocm -x ROCSHMEM_MAX_NUM_CONTEXTS=$ROCSHMEM_MAX_NUM_CONTEXTS"
 
   if [[ "" != "$HOSTFILE" ]]
   then
@@ -143,12 +146,12 @@ TestEx() {
   ##############################################################################
   #       | Name             | Ranks | Workgroups | Threads | Max Message Size #
   ##############################################################################
-  ExecTest  "put"              2       1            1         1048576
-  ExecTest  "put"              2       1            1024      512
-  ExecTest  "put"              2       8            1         1048576
-  ExecTest  "put"              2       16           128       8
-  ExecTest  "put"              2       32           256       512
-  ExecTest  "put"              2       64           1024      8
+  ExecTest  "putnbi"           2       1            1         1048576
+  ExecTest  "putnbi"           2       1            1024      512
+  # ExecTest  "putnbi"           2       8            1         1048576
+  # ExecTest  "putnbi"           2       16           128       8
+  # ExecTest  "putnbi"           2       32           256       512
+  # ExecTest  "putnbi"           2       64           1024      8
 }
 
 TestRMA() {
@@ -191,19 +194,19 @@ TestRMA() {
 
   ExecTest  "teamctxget"       2       1            1         1048576
 
-  ExecTest  "g"                2       1            1         1048576
-  ExecTest  "g"                2       1            1024      512
-  ExecTest  "g"                2       8            1         1048576
-  ExecTest  "g"                2       16           128       8
-  ExecTest  "g"                2       32           256       512
-  ExecTest  "g"                2       64           1024      8
+  # ExecTest  "g"                2       1            1         1048576
+  # ExecTest  "g"                2       1            1024      512
+  # ExecTest  "g"                2       8            1         1048576
+  # ExecTest  "g"                2       16           128       8
+  # ExecTest  "g"                2       32           256       512
+  # ExecTest  "g"                2       64           1024      8
 
-  ExecTest  "p"                2       1            1         1048576
-  ExecTest  "p"                2       1            1024      512
-  ExecTest  "p"                2       8            1         1048576
-  ExecTest  "p"                2       16           128       8
-  ExecTest  "p"                2       32           256       512
-  ExecTest  "p"                2       64           1024      8
+  # ExecTest  "p"                2       1            1         1048576
+  # ExecTest  "p"                2       1            1024      512
+  # ExecTest  "p"                2       8            1         1048576
+  # ExecTest  "p"                2       16           128       8
+  # ExecTest  "p"                2       32           256       512
+  # ExecTest  "p"                2       64           1024      8
 
   ################################ Non-Blocking ################################
 

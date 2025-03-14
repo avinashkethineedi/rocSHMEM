@@ -660,6 +660,7 @@ __device__ void build_queue_element(
     int network_status{0};
     do {
       refresh_volatile_sbyte(&network_status, queue_element->status);
+      // network_status = __hip_atomic_load(queue_element->status, __ATOMIC_RELAXED, __HIP_MEMORY_SCOPE_SYSTEM);
     } while (network_status == 0);
 
     *(queue_element->status) = 0;
