@@ -293,6 +293,11 @@ class GDAContext : public Context {
    */
   __device__ uint32_t get_qp_index(int pe);
 
+  /**
+   * @brief Get the destination pointer for a given PE
+   */
+  __device__ char* get_remote_ptr(const void* addr, int pe);
+
   //Temporary scratchpad memory used by internal barrier algorithms.
   int64_t *barrier_sync{nullptr};
 
@@ -327,6 +332,9 @@ class GDAContext : public Context {
  public:
   QueuePair *qps{nullptr};
 
+  /**
+   * @brief Base heap pointers for all PEs
+   */
   char *const *base_heap{nullptr};
 
   //TODO(Avinash):
