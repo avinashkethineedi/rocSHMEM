@@ -291,7 +291,7 @@ class GDAContext : public Context {
   /**
    * @brief Get the Queue Pair index to use for a given PE
    */
-  __device__ uint32_t get_qp_index(int pe);
+  __device__ __forceinline__ uint32_t get_qp_index(int pe);
 
   /**
    * @brief Get the destination pointer for a given PE

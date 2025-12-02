@@ -79,56 +79,6 @@ __host__ GDAContext::~GDAContext() {
   CHECK_HIP(hipFree(qps));
 }
 
-/**
- * @brief Get the Queue Pair index for a given PE based on a atomic counter
- *        This ensures even distribution of requests across multiple QPs
- *        allocated per PE.
- * @param pe The target PE
- * @return The Queue Pair index
- *
- * Explanation of QP indexing scheme:
- *  num_qps_per_pe = 4
- *  num_pes        = 3
- *
- *  Layout of QPs per PE:
- *
- *             PE0          PE1          PE2
- *           ───────      ───────      ───────
- *  QP0  ─> [ QP0,0 ]    [ QP0,1 ]    [ QP0,2 ]
- *  QP1  ─> [ QP1,0 ]    [ QP1,1 ]    [ QP1,2 ]
- *  QP2  ─> [ QP2,0 ]    [ QP2,1 ]  **[ QP2,2 ]** <-- highlighted (3rd QP of PE2)
- *  QP3  ─> [ QP3,0 ]    [ QP3,1 ]    [ QP3,2 ]
- *
- *  Legend:
- *    - num_qps_per_pe = 4  →  Four Queue Pairs per PE
- *    - num_pes = 3         →  Three Processing Elements (PE0–PE2)
- *    - QP[i,j]             →  i-th QP of PE j
- *    - **[ QP2,2 ]**       →  The 3rd QP (QP index 2) of PE2
- */
-__device__ uint32_t GDAContext::get_qp_index(int pe) {
-  uint64_t activemask   = get_active_lane_mask();
-  uint64_t same_pe_mask = __match_any_sync(activemask, pe);
-  const int leader_phys_lane_id = get_first_active_lane_id(same_pe_mask);
-  const int my_logical_lane_id  = get_active_lane_num(same_pe_mask);
-
-  uint32_t qp_index   {0};
-
-  if(my_logical_lane_id == 0) {
-    // Only the leader lane updates the counter
-    uint32_t local_qp_counter = __hip_atomic_fetch_add(&qp_counter[pe], 1,
-                                           __ATOMIC_RELAXED,
-                                           __HIP_MEMORY_SCOPE_AGENT);
-    local_qp_counter %= num_qps_per_pe;
-    qp_index = (local_qp_counter * num_pes) + pe;
-  }
-
-  // Broadcast the qp_index value to other lanes in the wavefront
-  // that are targeting the same PE
-  qp_index = __shfl_sync(same_pe_mask, qp_index, leader_phys_lane_id);
-
-  return qp_index;
-}
-
 __device__ char* GDAContext::get_remote_ptr(const void* addr, int pe) {
   const char* addr_ = reinterpret_cast<const char*>(addr);
   uint64_t L_offset = addr_ - base_heap[my_pe];
