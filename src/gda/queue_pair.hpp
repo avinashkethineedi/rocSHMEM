@@ -177,11 +177,19 @@ class QueuePair {
    * @param[in] raddr Remote address.
    * @param[in] opcode Operation to be performed.
    */
-  __device__ __attribute__((noinline)) void post_wqe_rma(int pe, int32_t size, uintptr_t *laddr, uintptr_t *raddr, uint8_t opcode, Collectivity cy);
-  __device__ __attribute__((noinline)) void post_wqe_rma_turn(int pe, int32_t size, uintptr_t *laddr, uintptr_t *raddr, uint8_t opcode, Collectivity cy);
+  __device__ __attribute__((noinline)) void
+  post_wqe_rma(int pe, int32_t size, uintptr_t *laddr, uintptr_t *raddr,
+      uint8_t opcode, active_wf_info &wf_info, Collectivity cy);
+  __device__ __attribute__((noinline)) void
+  post_wqe_rma_turn(int pe, int32_t size, uintptr_t *laddr, uintptr_t *raddr,
+      uint8_t opcode, active_wf_info &wf_info, Collectivity cy);
 
-  __device__ __attribute__((noinline)) void post_wqe_rma_single(int32_t size, uintptr_t *laddr, uintptr_t *raddr, uint8_t opcode, bool ring_db);
-  __device__ __attribute__((noinline)) void post_wqe_rma_mt(int pe, int32_t size, uintptr_t *laddr, uintptr_t *raddr, uint8_t opcode);
+  __device__ __attribute__((noinline)) void
+  post_wqe_rma_single(int32_t size, uintptr_t *laddr, uintptr_t *raddr,
+    uint8_t opcode, bool ring_db);
+  __device__ __attribute__((noinline)) void
+  post_wqe_rma_mt(int pe, int32_t size, uintptr_t *laddr, uintptr_t *raddr,
+    uint8_t opcode, active_wf_info &wf_info);
 
 #if defined(GDA_MLX5)
   __device__ __forceinline__ void
@@ -213,7 +221,7 @@ class QueuePair {
 
   __device__ void
   mlx5_post_wqe_rma(int32_t size, uintptr_t *laddr,
-      uintptr_t *raddr, uint8_t opcode);
+      uintptr_t *raddr, uint8_t opcode, active_wf_info &wf_info);
 
   __device__ void
   mlx5_quiet();

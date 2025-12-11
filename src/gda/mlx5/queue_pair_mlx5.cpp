@@ -200,29 +200,29 @@ __device__ __forceinline__ void QueuePair::mlx5_ring_doorbell(
 }
 
 __device__ void QueuePair::mlx5_post_wqe_rma(int32_t size, uintptr_t *laddr,
-    uintptr_t *raddr, uint8_t opcode) {
-  uint64_t activemask          = get_active_lane_mask();
-  uint8_t  num_active_lanes    = get_active_lane_count(activemask);
-  uint8_t  my_logical_lane_id  = get_active_lane_num(activemask);
-  bool     is_leader           = {my_logical_lane_id == 0};
-  uint64_t leader_phys_lane_id = get_first_active_lane_id(activemask);
+    uintptr_t *raddr, uint8_t opcode, active_wf_info &wf_info) {
+  // uint64_t activemask          = get_active_lane_mask();
+  // uint8_t  num_active_lanes    = get_active_lane_count(activemask);
+  // uint8_t  my_logical_lane_id  = get_active_lane_num(activemask);
+  // bool     is_leader           = {my_logical_lane_id == 0};
+  // uint64_t leader_phys_lane_id = get_first_active_lane_id(activemask);
 
-  uint8_t  num_wqes        = num_active_lanes;
+  uint8_t  num_wqes        = wf_info.num_active_lanes;
   uint64_t wave_sq_counter = 0;
   uint64_t my_sq_counter   = 0;
   uint64_t my_sq_index     = 0;
 
   // 1. Leader allocates SQ entries for the whole wave
-  if (is_leader) {
+  if (wf_info.is_leader) {
     wave_sq_counter = __hip_atomic_fetch_add(&sq_posted, num_wqes,
                       __ATOMIC_SEQ_CST, __HIP_MEMORY_SCOPE_AGENT);
   }
-  wave_sq_counter = __shfl(wave_sq_counter, leader_phys_lane_id);
-  my_sq_counter   = wave_sq_counter + my_logical_lane_id;
+  wave_sq_counter = __shfl(wave_sq_counter, wf_info.leader_phys_lane_id);
+  my_sq_counter   = wave_sq_counter + wf_info.my_logical_lane_id;
   my_sq_index     = my_sq_counter % sq_wqe_cnt;
 
   // 2. Wait for SQ space for the whole wave
-  mlx5_wait_for_free_sq_slots(wave_sq_counter, num_active_lanes);
+  mlx5_wait_for_free_sq_slots(wave_sq_counter, wf_info.num_active_lanes);
 
   // 3. Build the WQE for this lane
   mlx5_build_rma_wqe(my_sq_counter, my_sq_index, laddr, raddr, size, opcode);
@@ -230,7 +230,7 @@ __device__ void QueuePair::mlx5_post_wqe_rma(int32_t size, uintptr_t *laddr,
   __atomic_signal_fence(__ATOMIC_SEQ_CST);
 
   // 4. Leader rings doorbell for the wave
-  if (is_leader) {
+  if (wf_info.is_leader) {
     mlx5_ring_doorbell(wave_sq_counter, num_wqes);
   }
 }
