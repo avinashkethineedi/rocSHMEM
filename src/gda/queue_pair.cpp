@@ -263,7 +263,8 @@ __device__ void QueuePair::quiet_single() {
 /******************************************************************************
  ****************************** SHMEM INTERFACE *******************************
  *****************************************************************************/
-__device__ void QueuePair::put_nbi(void *dest, const void *source, size_t nelems, int pe, Collectivity cy) {
+__device__ void QueuePair::put_nbi(void *dest, const void *source,
+    size_t nelems, int pe, active_wf_info &wf_info, Collectivity cy) {
   uintptr_t *src = reinterpret_cast<uintptr_t*>(const_cast<void*>(source));
   uintptr_t *dst = reinterpret_cast<uintptr_t*>(dest);
   post_wqe_rma(pe, nelems, src, dst, gda_op_rdma_write, cy);
@@ -275,7 +276,8 @@ __device__ void QueuePair::put_nbi_single(void *dest, const void *source, size_t
   post_wqe_rma_single(nelems, src, dst, gda_op_rdma_write, ring_db);
 }
 
-__device__ void QueuePair::get_nbi(void *dest, const void *source, size_t nelems, int pe, Collectivity cy) {
+__device__ void QueuePair::get_nbi(void *dest, const void *source,
+    size_t nelems, int pe, active_wf_info &wf_info, Collectivity cy) {
   uintptr_t *src = reinterpret_cast<uintptr_t*>(const_cast<void*>(source));
   uintptr_t *dst = reinterpret_cast<uintptr_t*>(dest);
   post_wqe_rma(pe, nelems, dst, src, gda_op_rdma_read, cy);

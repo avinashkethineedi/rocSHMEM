@@ -41,6 +41,8 @@
 
 #include "ibv_wrapper.hpp"
 
+#include "context_gda_device.hpp"
+
 #include "gda/ionic/provider_gda_ionic.hpp"
 #include "gda/mlx5/provider_gda_mlx5.hpp"
 #include "gda/bnxt/provider_gda_bnxt.hpp"
@@ -76,7 +78,8 @@ class QueuePair {
    * @param[in] nelems Size in bytes of data transmission.
    * @param[in] pe Destination processing element of data transmission.
    */
-  __device__ void put_nbi(void *dest, const void *source, size_t nelems, int pe, Collectivity cy = THREAD);
+  __device__ void put_nbi(void *dest, const void *source, size_t nelems,
+      int pe, active_wf_info &wf_info, Collectivity cy = THREAD);
 
   __device__ void put_nbi_single(void *dest, const void *source, size_t nelems, bool ring_db);
 
@@ -88,7 +91,8 @@ class QueuePair {
    * @param[in] nelems Size in bytes of data transmission.
    * @param[in] pe Destination processing element of data transmission.
    */
-  __device__ void get_nbi(void *dest, const void *source, size_t nelems, int pe, Collectivity cy = THREAD);
+  __device__ void get_nbi(void *dest, const void *source, size_t nelems,
+      int pe, active_wf_info &wf_info, Collectivity cy = THREAD);
 
   /**
    * @brief Empty all completions from the completion queue.

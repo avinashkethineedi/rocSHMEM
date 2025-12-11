@@ -32,6 +32,43 @@ namespace rocshmem {
 
 class QueuePair;
 
+class active_wf_info {
+  public:
+    uint64_t      activemask {0};
+    uint8_t       num_active_lanes {0};
+    uint8_t       my_logical_lane_id {0};
+    bool          is_leader {false};
+    uint64_t      leader_phys_lane_id {};
+    uint64_t      same_pe_mask {0};
+    int           pe {-1};
+
+    __device__ active_wf_info(int pe)
+      : pe{pe}
+    {
+      activemask          = get_active_lane_mask();
+      num_active_lanes    = get_active_lane_count(activemask);
+      my_logical_lane_id  = get_active_lane_num(activemask);
+      is_leader           = (my_logical_lane_id == 0);
+      leader_phys_lane_id = get_first_active_lane_id(activemask);
+      same_pe_mask        = __match_any_sync(activemask, pe);
+    }
+
+    __device__ void debug_print(const char* prefix) {
+      printf(
+        "%s: activemask: 0x%lx, num_active_lanes: %u, my_logical_lane_id: %u, "
+        "is_leader: %u, leader_phys_lane_id: %lu, same_pe_mask: 0x%lx, pe: %d\n",
+        prefix,
+        activemask,
+        num_active_lanes,
+        my_logical_lane_id,
+        is_leader ? 1 : 0,
+        leader_phys_lane_id,
+        same_pe_mask,
+        pe
+      );
+    }
+};
+
 class GDAContext : public Context {
  public:
   __host__ GDAContext(Backend *b, unsigned int ctx_id, int gda_provider);
@@ -291,7 +328,7 @@ class GDAContext : public Context {
   /**
    * @brief Get the Queue Pair index to use for a given PE
    */
-  __device__ __forceinline__ uint32_t get_qp_index(int pe);
+  __device__ __forceinline__ uint32_t get_qp_index(int pe, active_wf_info wf_info);
 
   /**
    * @brief Get the destination pointer for a given PE

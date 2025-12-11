@@ -96,7 +96,8 @@ __device__ void GDAContext::amo_add(void *dst, T value, int pe) {
   uint64_t L_offset = reinterpret_cast<char *>(dst) - base_heap[my_pe];
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -121,7 +122,8 @@ __device__ T GDAContext::amo_swap(void *dst, T value, int pe) {
   uint64_t turns = __ballot(need_turn);
   T ret_val;
   T cond = 0;
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -151,7 +153,8 @@ __device__ T GDAContext::amo_fetch_and(void *dst, T value, int pe) {
   T ret_val;
   T cond = 0;
   T desired_val = cond & value;
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -182,7 +185,8 @@ __device__ T GDAContext::amo_fetch_or(void *dst, T value, int pe) {
   T ret_val;
   T cond = 0;
   T desired_val = cond | value;
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -213,7 +217,8 @@ __device__ T GDAContext::amo_fetch_xor(void *dst, T value, int pe) {
   T ret_val;
   T cond = 0;
   T desired_val = cond ^ value;
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -241,7 +246,8 @@ __device__ void GDAContext::amo_cas(void *dst, T value, T cond, int pe) {
   uint64_t L_offset = reinterpret_cast<char *>(dst) - base_heap[my_pe];
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -260,7 +266,8 @@ __device__ T GDAContext::amo_fetch_add(void *dst, T value, int pe) {
   T ret_val = 0;
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -280,7 +287,8 @@ __device__ T GDAContext::amo_fetch_cas(void *dst, T value, T cond, int pe) {
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
   T ret_val;
-  int qp_index = get_qp_index(pe);
+  active_wf_info wf_info(pe);
+  int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
     int pe_turn = __shfl(pe, lane);
@@ -813,15 +821,12 @@ GDA_CONTEXT_PUT_SIGNAL_DEF(_wave)
  *    - QP[i,j]             →  i-th QP of PE j
  *    - **[ QP2,2 ]**       →  The 3rd QP (QP index 2) of PE2
  */
-__device__ __forceinline__ uint32_t GDAContext::get_qp_index(int pe) {
-  uint64_t activemask   = get_active_lane_mask();
-  uint64_t same_pe_mask = __match_any_sync(activemask, pe);
-  const int leader_phys_lane_id = get_first_active_lane_id(same_pe_mask);
-  const int my_logical_lane_id  = get_active_lane_num(same_pe_mask);
+__device__ __forceinline__ uint32_t GDAContext::get_qp_index(int pe,
+    active_wf_info wf_info) {
 
   uint32_t qp_index   {0};
 
-  if(my_logical_lane_id == 0) {
+  if(wf_info.my_logical_lane_id == 0) {
     // Only the leader lane updates the counter
     uint32_t local_qp_counter = __hip_atomic_fetch_add(&qp_counter[pe], 1,
                                            __ATOMIC_RELAXED,
@@ -832,7 +837,8 @@ __device__ __forceinline__ uint32_t GDAContext::get_qp_index(int pe) {
 
   // Broadcast the qp_index value to other lanes in the wavefront
   // that are targeting the same PE
-  qp_index = __shfl_sync(same_pe_mask, qp_index, leader_phys_lane_id);
+  qp_index = __shfl_sync(wf_info.same_pe_mask, qp_index,
+                wf_info.leader_phys_lane_id);
 
   return qp_index;
 }
