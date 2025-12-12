@@ -32,6 +32,12 @@ namespace rocshmem {
 
 class QueuePair;
 
+enum class thread_scope {
+  thread,
+  wave,
+  block
+};
+
 class active_wf_info {
   public:
     uint64_t      activemask {0};
@@ -41,31 +47,33 @@ class active_wf_info {
     uint64_t      leader_phys_lane_id {};
     uint64_t      same_pe_mask {0};
     int           pe {-1};
+    thread_scope  scope {thread_scope::thread};
 
-    __device__ active_wf_info(int pe)
-      : pe{pe}
+    __device__ active_wf_info(int pe, thread_scope scope)
+      : pe{pe}, scope{scope}
     {
-      activemask          = get_active_lane_mask();
-      num_active_lanes    = get_active_lane_count(activemask);
-      my_logical_lane_id  = get_active_lane_num(activemask);
-      is_leader           = (my_logical_lane_id == 0);
-      leader_phys_lane_id = get_first_active_lane_id(activemask);
-      same_pe_mask        = __match_any_sync(activemask, pe);
-    }
+      activemask = get_active_lane_mask();
 
-    __device__ void debug_print(const char* prefix) {
-      printf(
-        "%s: activemask: 0x%lx, num_active_lanes: %u, my_logical_lane_id: %u, "
-        "is_leader: %u, leader_phys_lane_id: %lu, same_pe_mask: 0x%lx, pe: %d\n",
-        prefix,
-        activemask,
-        num_active_lanes,
-        my_logical_lane_id,
-        is_leader ? 1 : 0,
-        leader_phys_lane_id,
-        same_pe_mask,
-        pe
-      );
+      switch (scope) {
+        case thread_scope::thread: {
+          num_active_lanes    = get_active_lane_count(activemask);
+          my_logical_lane_id  = get_active_lane_num(activemask);
+          is_leader           = (my_logical_lane_id == 0);
+          leader_phys_lane_id = get_first_active_lane_id(activemask);
+          same_pe_mask        = __match_any_sync(activemask, pe);
+          break;
+        }
+
+        case thread_scope::wave:
+        case thread_scope::block: {
+          num_active_lanes    = 1;
+          my_logical_lane_id  = 0;
+          is_leader           = true;
+          leader_phys_lane_id = get_first_active_lane_id(activemask);
+          same_pe_mask        = activemask;
+          break;
+        }
+      }
     }
 };
 

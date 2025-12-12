@@ -96,7 +96,7 @@ __device__ void GDAContext::amo_add(void *dst, T value, int pe) {
   uint64_t L_offset = reinterpret_cast<char *>(dst) - base_heap[my_pe];
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -122,7 +122,7 @@ __device__ T GDAContext::amo_swap(void *dst, T value, int pe) {
   uint64_t turns = __ballot(need_turn);
   T ret_val;
   T cond = 0;
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -153,7 +153,7 @@ __device__ T GDAContext::amo_fetch_and(void *dst, T value, int pe) {
   T ret_val;
   T cond = 0;
   T desired_val = cond & value;
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -185,7 +185,7 @@ __device__ T GDAContext::amo_fetch_or(void *dst, T value, int pe) {
   T ret_val;
   T cond = 0;
   T desired_val = cond | value;
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -217,7 +217,7 @@ __device__ T GDAContext::amo_fetch_xor(void *dst, T value, int pe) {
   T ret_val;
   T cond = 0;
   T desired_val = cond ^ value;
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -246,7 +246,7 @@ __device__ void GDAContext::amo_cas(void *dst, T value, T cond, int pe) {
   uint64_t L_offset = reinterpret_cast<char *>(dst) - base_heap[my_pe];
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -266,7 +266,7 @@ __device__ T GDAContext::amo_fetch_add(void *dst, T value, int pe) {
   T ret_val = 0;
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;
@@ -287,7 +287,7 @@ __device__ T GDAContext::amo_fetch_cas(void *dst, T value, T cond, int pe) {
   bool need_turn {true};
   uint64_t turns = __ballot(need_turn);
   T ret_val;
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   while (turns) {
     uint8_t lane = __ffsll((unsigned long long)turns) - 1;

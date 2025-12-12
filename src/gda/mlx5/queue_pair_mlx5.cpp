@@ -201,12 +201,6 @@ __device__ __forceinline__ void QueuePair::mlx5_ring_doorbell(
 
 __device__ void QueuePair::mlx5_post_wqe_rma(int32_t size, uintptr_t *laddr,
     uintptr_t *raddr, uint8_t opcode, active_wf_info &wf_info) {
-  // uint64_t activemask          = get_active_lane_mask();
-  // uint8_t  num_active_lanes    = get_active_lane_count(activemask);
-  // uint8_t  my_logical_lane_id  = get_active_lane_num(activemask);
-  // bool     is_leader           = {my_logical_lane_id == 0};
-  // uint64_t leader_phys_lane_id = get_first_active_lane_id(activemask);
-
   uint8_t  num_wqes        = wf_info.num_active_lanes;
   uint64_t wave_sq_counter = 0;
   uint64_t my_sq_counter   = 0;

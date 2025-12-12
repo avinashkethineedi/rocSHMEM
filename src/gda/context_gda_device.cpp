@@ -99,7 +99,7 @@ __device__ void GDAContext::putmem(void *dest, const void *source, size_t nelems
     ipcImpl_.ipcCopy(ipcImpl_.ipc_bases[local_pe] + L_offset, const_cast<void *>(source), nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info);
   qps[qp_index].quiet();
@@ -114,7 +114,7 @@ __device__ void GDAContext::getmem(void *dest, const void *source, size_t nelems
     ipcImpl_.ipcCopy(dest, ipcImpl_.ipc_bases[local_pe] + L_offset, nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].get_nbi(dest, get_remote_ptr(source, pe), nelems, pe, wf_info);
   qps[qp_index].quiet();
@@ -128,7 +128,7 @@ __device__ void GDAContext::putmem_nbi(void *dest, const void *source,
     ipcImpl_.ipcCopy(ipcImpl_.ipc_bases[local_pe] + L_offset, const_cast<void *>(source), nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info);
 }
@@ -142,7 +142,7 @@ __device__ void GDAContext::getmem_nbi(void *dest, const void *source,
     ipcImpl_.ipcCopy(dest, ipcImpl_.ipc_bases[local_pe] + L_offset, nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].get_nbi(dest, get_remote_ptr(source, pe), nelems, pe, wf_info);
 }
@@ -201,7 +201,7 @@ __device__ void GDAContext::putmem_wg(void *dest, const void *source,
     return;
   }
   if (is_wave_zero_in_block()) {
-    active_wf_info wf_info(pe);
+    active_wf_info wf_info(pe, thread_scope::block);
     int qp_index = get_qp_index(pe, wf_info);
     qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
     qps[qp_index].quiet();
@@ -218,7 +218,7 @@ __device__ void GDAContext::getmem_wg(void *dest, const void *source,
     return;
   }
   if (is_wave_zero_in_block()) {
-    active_wf_info wf_info(pe);
+    active_wf_info wf_info(pe, thread_scope::block);
     int qp_index = get_qp_index(pe, wf_info);
     qps[qp_index].get_nbi(dest, get_remote_ptr(source, pe), nelems, pe, wf_info, QueuePair::WAVE);
     qps[qp_index].quiet();
@@ -234,7 +234,7 @@ __device__ void GDAContext::putmem_nbi_wg(void *dest, const void *source,
     return;
   }
   if (is_wave_zero_in_block()) {
-    active_wf_info wf_info(pe);
+    active_wf_info wf_info(pe, thread_scope::block);
     int qp_index = get_qp_index(pe, wf_info);
     qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
   }
@@ -250,7 +250,7 @@ __device__ void GDAContext::getmem_nbi_wg(void *dest, const void *source,
     return;
   }
   if (is_wave_zero_in_block()) {
-    active_wf_info wf_info(pe);
+    active_wf_info wf_info(pe, thread_scope::block);
     int qp_index = get_qp_index(pe, wf_info);
     qps[qp_index].get_nbi(dest, get_remote_ptr(source, pe), nelems, pe, wf_info, QueuePair::WAVE);
   }
@@ -264,7 +264,7 @@ __device__ void GDAContext::putmem_wave(void *dest, const void *source,
     ipcImpl_.ipcCopy_wave(ipcImpl_.ipc_bases[local_pe] + L_offset, const_cast<void *>(source), nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::wave);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
   qps[qp_index].quiet();
@@ -279,7 +279,7 @@ __device__ void GDAContext::getmem_wave(void *dest, const void *source,
     ipcImpl_.ipcCopy_wave(dest, ipcImpl_.ipc_bases[local_pe] + L_offset, nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::wave);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].get_nbi(dest, get_remote_ptr(source, pe), nelems, pe, wf_info, QueuePair::WAVE);
   qps[qp_index].quiet();
@@ -293,7 +293,7 @@ __device__ void GDAContext::putmem_nbi_wave(void *dest, const void *source,
     ipcImpl_.ipcCopy_wave(ipcImpl_.ipc_bases[local_pe] + L_offset, const_cast<void *>(source), nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::wave);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
 }
@@ -307,7 +307,7 @@ __device__ void GDAContext::getmem_nbi_wave(void *dest, const void *source,
     ipcImpl_.ipcCopy_wave(dest, ipcImpl_.ipc_bases[local_pe] + L_offset, nelems);
     return;
   }
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::wave);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].get_nbi(dest, get_remote_ptr(source, pe), nelems, pe, wf_info, QueuePair::WAVE);
 }
@@ -317,7 +317,7 @@ __device__ void GDAContext::getmem_nbi_wave(void *dest, const void *source,
 __device__ void GDAContext::putmem_signal(void *dest, const void *source, size_t nelems,
                                           uint64_t *sig_addr, uint64_t signal, int sig_op,
                                           int pe) {
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::thread);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info);
   qps[qp_index].quiet();
@@ -340,8 +340,8 @@ __device__ void GDAContext::putmem_signal_wg(void *dest, const void *source, siz
                                              uint64_t *sig_addr, uint64_t signal, int sig_op,
                                              int pe) {
   if (is_wave_zero_in_block()) {
-    active_wf_info wf_info(pe);
-  int qp_index = get_qp_index(pe, wf_info);
+    active_wf_info wf_info(pe, thread_scope::block);
+    int qp_index = get_qp_index(pe, wf_info);
     qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
     qps[qp_index].quiet();
   }
@@ -365,7 +365,7 @@ __device__ void GDAContext::putmem_signal_wg(void *dest, const void *source, siz
 __device__ void GDAContext::putmem_signal_wave(void *dest, const void *source, size_t nelems,
                                                uint64_t *sig_addr, uint64_t signal, int sig_op,
                                                int pe) {
-  active_wf_info wf_info(pe);
+  active_wf_info wf_info(pe, thread_scope::wave);
   int qp_index = get_qp_index(pe, wf_info);
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
   qps[qp_index].quiet();
