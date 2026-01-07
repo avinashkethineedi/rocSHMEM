@@ -149,7 +149,9 @@ __device__ __forceinline__ void QueuePair::mlx5_wait_for_free_sq_slots(
     if (num_free_entries > num_entries_until_wave_last_entry) {
       break;
     }
-
+    // printf("Waiting for SQ space: free %lu, needed %lu\n",
+    //        num_free_entries,
+    //        num_entries_until_wave_last_entry);
     mlx5_quiet();
   }
 }
@@ -216,7 +218,11 @@ __device__ void QueuePair::mlx5_post_wqe_rma(int32_t size, uintptr_t *laddr,
   my_sq_index     = my_sq_counter % sq_wqe_cnt;
 
   // 2. Wait for SQ space for the whole wave
-  mlx5_wait_for_free_sq_slots(wave_sq_counter, wf_info.num_active_lanes);
+  // mlx5_wait_for_free_sq_slots(wave_sq_counter, wf_info.num_active_lanes);
+  // printf("Wave %d got SQ space for %u WQEs at SQ counter %lu\n",
+  //        get_flat_block_id() / WF_SIZE,
+  //        num_wqes,
+  //        wave_sq_counter);
 
   // 3. Build the WQE for this lane
   mlx5_build_rma_wqe(my_sq_counter, my_sq_index, laddr, raddr, size, opcode);
@@ -291,7 +297,7 @@ __device__ uint64_t QueuePair::mlx5_post_wqe_amo(int32_t size,
   my_sq_index     = my_sq_counter % sq_wqe_cnt;
 
   // 2. Wait for SQ space for the whole wave
-  mlx5_wait_for_free_sq_slots(wave_sq_counter, num_active_lanes);
+  // mlx5_wait_for_free_sq_slots(wave_sq_counter, num_active_lanes);
 
   uint64_t* wave_fetch_atomic{nullptr};
   if (fetching) {
