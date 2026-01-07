@@ -491,6 +491,13 @@ __device__ void Context::amo_add(void *dst, T value, int pe) {
 }
 
 template <typename T>
+__device__ void Context::amo_add_qp(void *dst, T value, int pe, int qp_index) {
+  ctxStats.incStat(NUM_ATOMIC_ADD);
+
+  DISPATCH(amo_add_qp(dst, value, pe, qp_index));
+}
+
+template <typename T>
 __device__ void Context::amo_set(void *dst, T value, int pe) {
   ctxStats.incStat(NUM_ATOMIC_SET);
 

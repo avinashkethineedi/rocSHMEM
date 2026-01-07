@@ -892,6 +892,15 @@ __device__ void rocshmem_atomic_add(rocshmem_ctx_t ctx, T *dest, T val,
   get_internal_ctx(ctx)->amo_add<T>(dest, val, pe);
 }
 
+// DeepEP LL specifc atomic add API
+__device__ void rocshmem_long_atomic_add_qp(long *dest, long val,
+                                     int pe, int qp_index) {
+  GPU_DPRINTF("Function: rocshmem_long_atomic_add_qp (ctx=%zd, dest=%p, val=%g, pe=%d w%d, qp=%d)\n",
+    ctx.ctx_opaque, dest, (double)val, pe, translate_pe(ctx, pe), qp_index);
+
+  get_internal_ctx(ROCSHMEM_CTX_DEFAULT)->amo_add_qp<long>(dest, val, pe, qp_index);
+}
+
 template <typename T>
 __device__ void rocshmem_atomic_inc(rocshmem_ctx_t ctx, T *dest, int pe) {
   GPU_DPRINTF("Function: rocshmem_atomic_inc (ctx=%zd, dest=%p, pe=%d w%d)\n",
@@ -983,6 +992,26 @@ __device__ void rocshmem_ctx_putmem_wave(rocshmem_ctx_t ctx, void *dest,
 
   get_internal_ctx(ctx)->putmem_wave(dest, source, nelems, pe);
 }
+
+// DeepEP LL specific APIs
+__device__ void rocshmem_putmem_wave_qp(void *dest,
+                                          const void *source, size_t nelems,
+                                          int pe, int qp_index) {
+  GPU_DPRINTF("Function: rocshmem_putmem_wave_qp (ctx=%zd, dest=%p, source=%p, nelems=%d, pe=%d w%d, qp=%d)\n",
+    ctx.ctx_opaque, dest, source, nelems, pe, translate_pe(ctx, pe), qp_index);
+
+  get_internal_ctx(ROCSHMEM_CTX_DEFAULT)->putmem_wave_qp(dest, source, nelems, pe, qp_index);
+}
+
+__device__ void rocshmem_putmem_nbi_wave_qp(void *dest,
+                                          const void *source, size_t nelems,
+                                          int pe, int qp_index) {
+  GPU_DPRINTF("Function: rocshmem_putmem_wave_qp (ctx=%zd, dest=%p, source=%p, nelems=%d, pe=%d w%d, qp=%d)\n",
+    ctx.ctx_opaque, dest, source, nelems, pe, translate_pe(ctx, pe), qp_index);
+
+  get_internal_ctx(ROCSHMEM_CTX_DEFAULT)->putmem_nbi_wave_qp(dest, source, nelems, pe, qp_index);
+}
+//---------------------------------------------------------------------------
 
 __device__ void rocshmem_ctx_putmem_wg(rocshmem_ctx_t ctx, void *dest,
                                         const void *source, size_t nelems,

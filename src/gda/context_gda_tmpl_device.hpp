@@ -110,6 +110,26 @@ __device__ void GDAContext::amo_add(void *dst, T value, int pe) {
 }
 
 template <typename T>
+__device__ void GDAContext::amo_add_qp(void *dst, T value, int pe, int qp_index) {
+  if constexpr (sizeof(T) != 8) { printf("rocshmem::gda:amo_add not implemented for non-64bit types.\n"); abort(); }//TODO:support for non-uint64t
+  uint64_t L_offset = reinterpret_cast<char *>(dst) - base_heap[my_pe];
+  bool need_turn {true};
+  uint64_t turns = __ballot(need_turn);
+  active_wf_info wf_info(pe, thread_scope::thread);
+  qp_index %= num_qps_per_pe;
+  qp_index = qp_index * num_pes + pe;
+  while (turns) {
+    uint8_t lane = __ffsll((unsigned long long)turns) - 1;
+    int pe_turn = __shfl(pe, lane);
+    if (pe_turn == pe) {
+      qps[qp_index].atomic_nofetch(base_heap[pe] + L_offset, value, 0, pe);
+      need_turn = false;
+    }
+    turns = __ballot(need_turn);
+  }
+}
+
+template <typename T>
 __device__ void GDAContext::amo_set(void *dst, T value, int pe) {
   amo_swap(dst, value, pe);
 }

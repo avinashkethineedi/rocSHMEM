@@ -249,6 +249,10 @@ __device__ ATTR_NO_INLINE void rocshmem_putmem_wave(void *dest,
                                                      const void *source,
                                                      size_t nelems, int pe);
 
+__device__ ATTR_NO_INLINE void rocshmem_putmem_wave_qp(void *dest,
+                                                     const void *source,
+                                                     size_t nelems, int pe, int qp_index);
+
 /**
  * @brief Writes contiguous data of \p nelems bytes from \p source on the
  * calling PE to \p dest at \p pe. The caller will block until the operation
@@ -750,6 +754,11 @@ __device__ ATTR_NO_INLINE void rocshmem_putmem_nbi_wave(void *dest,
                                                          const void *source,
                                                          size_t nelems,
                                                          int pe);
+
+__device__ ATTR_NO_INLINE void rocshmem_putmem_nbi_wave_qp(void *dest,
+                                                         const void *source,
+                                                         size_t nelems,
+                                                         int pe, int qp_index);
 
 /**
  * @brief Writes contiguous data of \p nelems bytes from \p source on the

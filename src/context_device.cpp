@@ -277,6 +277,17 @@ __device__ void Context::putmem_wave(void* dest, const void* source,
   DISPATCH(putmem_wave(dest, source, nelems, pe));
 }
 
+__device__ void Context::putmem_wave_qp(void* dest, const void* source,
+                                     size_t nelems, int pe, int qp_index) {
+  if (nelems == 0) {
+    return;
+  }
+
+  ctxStats.incStat(NUM_PUT_WAVE);
+
+  DISPATCH(putmem_wave_qp(dest, source, nelems, pe, qp_index));
+}
+
 __device__ void Context::getmem_wave(void* dest, const void* source,
                                      size_t nelems, int pe) {
   if (nelems == 0) {
@@ -297,6 +308,17 @@ __device__ void Context::putmem_nbi_wave(void* dest, const void* source,
   ctxStats.incStat(NUM_PUT_NBI_WAVE);
 
   DISPATCH(putmem_nbi_wave(dest, source, nelems, pe));
+}
+
+__device__ void Context::putmem_nbi_wave_qp(void* dest, const void* source,
+                                     size_t nelems, int pe, int qp_index) {
+  if (nelems == 0) {
+    return;
+  }
+
+  ctxStats.incStat(NUM_PUT_WAVE);
+
+  DISPATCH(putmem_nbi_wave_qp(dest, source, nelems, pe, qp_index));
 }
 
 __device__ void Context::getmem_nbi_wave(void* dest, const void* source,

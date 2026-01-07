@@ -170,6 +170,9 @@ class Context {
   __device__ void amo_add(void* dst, T value, int pe);
 
   template <typename T>
+  __device__ void amo_add_qp(void* dst, T value, int pe, int qp_index);
+
+  template <typename T>
   __device__ void amo_set(void* dst, T value, int pe);
 
   template <typename T>
@@ -260,11 +263,17 @@ class Context {
   __device__ void putmem_wave(void* dest, const void* source, size_t nelems,
                               int pe);
 
+  __device__ void putmem_wave_qp(void* dest, const void* source, size_t nelems,
+                              int pe, int qp_index);
+
   __device__ void getmem_wave(void* dest, const void* source, size_t nelems,
                               int pe);
 
   __device__ void putmem_nbi_wave(void* dest, const void* source, size_t nelems,
                                   int pe);
+
+  __device__ void putmem_nbi_wave_qp(void* dest, const void* source, size_t nelems,
+                              int pe, int qp_index);
 
   __device__ void getmem_nbi_wave(void* dest, const void* source, size_t size,
                                   int pe);

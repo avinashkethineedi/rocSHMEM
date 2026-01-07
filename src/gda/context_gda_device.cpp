@@ -270,6 +270,22 @@ __device__ void GDAContext::putmem_wave(void *dest, const void *source,
   qps[qp_index].quiet();
 }
 
+// DeepEP LL specific API
+__device__ void GDAContext::putmem_wave_qp(void *dest, const void *source,
+                                        size_t nelems, int pe, int qp_index) {
+  int local_pe{-1};
+  if (ipcImpl_.isIpcAvailable(my_pe, pe, &local_pe)) {
+    uint64_t L_offset = reinterpret_cast<char *>(dest) - ipcImpl_.ipc_bases[ipcImpl_.shm_rank];
+    ipcImpl_.ipcCopy_wave(ipcImpl_.ipc_bases[local_pe] + L_offset, const_cast<void *>(source), nelems);
+    return;
+  }
+  active_wf_info wf_info(pe, thread_scope::wave);
+  qp_index %= num_qps_per_pe;
+  qp_index = qp_index * num_pes + pe;
+  qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
+  qps[qp_index].quiet();
+}
+
 __device__ void GDAContext::getmem_wave(void *dest, const void *source,
                                         size_t nelems, int pe) {
   const char *src_typed = reinterpret_cast<const char *>(source);
@@ -295,6 +311,21 @@ __device__ void GDAContext::putmem_nbi_wave(void *dest, const void *source,
   }
   active_wf_info wf_info(pe, thread_scope::wave);
   int qp_index = get_qp_index(pe, wf_info);
+  qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
+}
+
+// DeepEP LL specific API
+__device__ void GDAContext::putmem_nbi_wave_qp(void *dest, const void *source,
+                                        size_t nelems, int pe, int qp_index) {
+  int local_pe{-1};
+  if (ipcImpl_.isIpcAvailable(my_pe, pe, &local_pe)) {
+    uint64_t L_offset = reinterpret_cast<char *>(dest) - ipcImpl_.ipc_bases[ipcImpl_.shm_rank];
+    ipcImpl_.ipcCopy_wave(ipcImpl_.ipc_bases[local_pe] + L_offset, const_cast<void *>(source), nelems);
+    return;
+  }
+  active_wf_info wf_info(pe, thread_scope::wave);
+  qp_index %= num_qps_per_pe;
+  qp_index = qp_index * num_pes + pe;
   qps[qp_index].put_nbi(get_remote_ptr(dest, pe), source, nelems, pe, wf_info, QueuePair::WAVE);
 }
 
