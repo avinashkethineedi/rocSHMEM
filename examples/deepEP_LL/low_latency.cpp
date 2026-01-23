@@ -8,10 +8,10 @@ int main (int argc, char **argv)
 
     // DeepEP_LL parameters
     // TODO: These parameters should be configurable via command-line arguments
-    int num_tokens = 3;//128;
-    int hidden = 8;//7168;
-    int num_topk = 8;//8;
-    int num_experts = 288;//288;
+    int num_tokens = 128; //3
+    int hidden = 7168; //8
+    int num_topk = 8; //3
+    int num_experts = 288; //16
 
     LLDeepEP<dtype> ll_deepep(num_tokens, hidden, num_topk, num_experts);
 

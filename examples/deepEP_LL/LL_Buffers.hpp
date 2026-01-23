@@ -50,8 +50,8 @@ struct LLBufferLayout {
     const int num_local_experts = num_experts / num_ranks;
 
     // Message sizes
-    size_t num_bytes_per_dispatch_msg = sizeof(int4) + hidden * sizeof(T);
-    size_t num_bytes_per_combine_msg  = sizeof(int4) + hidden * sizeof(T);
+    size_t num_bytes_per_dispatch_msg = sizeof(int) + hidden * sizeof(T);
+    size_t num_bytes_per_combine_msg  = sizeof(int) + hidden * sizeof(T);
 
     // Send buffers sizes
     size_t dispatch_send_buffer_bytes = num_tokens *
@@ -78,13 +78,13 @@ struct LLBufferLayout {
     //           << hidden
     //           << ", send buffer bytes: "
     //           << send_buffer_bytes
-    //           << ", sizeof(int4): "
-    //           << sizeof(int4)
-    //           << ", send_buffer_bytes % sizeof(int4): "
-    //           << (send_buffer_bytes % sizeof(int4) == 0)
+    //           << ", sizeof(int): "
+    //           << sizeof(int)
+    //           << ", send_buffer_bytes % sizeof(int): "
+    //           << (send_buffer_bytes % sizeof(int) == 0)
     //           << std::endl;
 
-    ASSERT(send_buffer_bytes % sizeof(int4) == 0);
+    ASSERT(send_buffer_bytes % sizeof(int) == 0);
     total_bytes += send_buffer_bytes * 2;
 
     // receive buffers sizes
@@ -94,7 +94,7 @@ struct LLBufferLayout {
                                         num_bytes_per_combine_msg;
     size_t recv_buffer_bytes = std::max(dispatch_recv_buffer_bytes,
                                         combine_recv_buffer_bytes);
-    ASSERT(recv_buffer_bytes % sizeof(int4) == 0);
+    ASSERT(recv_buffer_bytes % sizeof(int) == 0);
     total_bytes += recv_buffer_bytes * 2;
 
     // Symmetric signaling buffers

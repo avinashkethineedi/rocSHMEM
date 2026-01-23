@@ -18,6 +18,9 @@ class LLData {
   // Token to expert mapping
   int64_t *topk_idx {nullptr};
 
+  // Number of tokens assigned to each expert
+  std::vector<int> expert_token_count;
+
   enum class InitMode {
     Deterministic,
     Random
@@ -31,19 +34,7 @@ class LLData {
     int num_experts_, InitMode init_mode_ = InitMode::Deterministic)
       : num_tokens(num_tokens_), hidden(hidden_),
         num_topk(num_topk_), num_experts(num_experts_),
-        init_mode(init_mode_) {
-    size_t x_size = num_tokens * hidden * sizeof(T);
-    size_t topk_idx_size = num_tokens * num_topk * sizeof(int64_t);
-
-    CHECK_HIP(hipMalloc(&X, x_size));
-    CHECK_HIP(hipMalloc(&topk_idx, topk_idx_size));
-
-    generate_data();
-
-    // Debug prints
-    print();
-    // print_data();
-  }
+        init_mode(init_mode_), expert_token_count(num_experts, 0) {}
 
   ~LLData() {
     if (X) {
@@ -52,6 +43,44 @@ class LLData {
     if (topk_idx) {
       CHECK_HIP(hipFree(topk_idx));
     }
+  }
+
+  // Function to generate input data
+  void generate_data() {
+
+    size_t x_size_bytes = num_tokens * hidden * sizeof(T);
+    size_t topk_idx_size_bytes = num_tokens * num_topk * sizeof(int64_t);
+
+    CHECK_HIP(hipMalloc(&X, x_size_bytes));
+    CHECK_HIP(hipMalloc(&topk_idx, topk_idx_size_bytes));
+
+    size_t x_size = num_tokens * hidden;
+
+    // Launch kernel to fill input data (X)
+    int threads_per_block = 1024;
+    int blocks_per_grid = num_tokens; // one block per token
+
+    int gpu_id {0};
+    CHECK_HIP(hipGetDevice(&gpu_id));
+
+    // print GPU id
+    std::cout << "Generating data on GPU " << gpu_id << std::endl;
+
+    data_kernel<<<blocks_per_grid, threads_per_block>>>(X, hidden, gpu_id);
+    CHECK_HIP(hipDeviceSynchronize());
+
+    switch (init_mode) {
+      case InitMode::Deterministic:
+        generate_topk_deterministic();
+        break;
+      case InitMode::Random:
+        generate_topk_random();
+        break;
+    }
+
+    // Debug prints
+    // print();
+    // print_data();
   }
 
  private:
@@ -97,16 +126,22 @@ class LLData {
       }
       std::cout << std::endl;
     }
+
+    // Print expert token counts
+    std::cout << "Expert Token Counts:" << std::endl;
+    for (int j = 0; j < num_experts; j++) {
+      std::cout << "Expert " << j << ": " << expert_token_count[j] << " tokens" << std::endl;
+    }
   }
 
   /**
    * GPU kernel to generate the input data
    * Each token's hidden vector is filled with the token index
    */
-  __global__ static void data_kernel(T* X, int hidden) {
+  __global__ static void data_kernel(T* X, int hidden, int rank) {
     int tkn_idx = blockIdx.x;
     for (int h = threadIdx.x; h < hidden; h += blockDim.x) {
-      X[tkn_idx * hidden + h] = tkn_idx;
+      X[tkn_idx * hidden + h] = tkn_idx + 10 + rank * 1000;
     }
   }
 
@@ -131,6 +166,7 @@ class LLData {
       std::shuffle(expert_indices.begin(), expert_indices.end(), gen);
       for (int k = 0; k < num_topk; k++) {
         h_topk_idx[i * num_topk + k] = expert_indices[k];
+        expert_token_count[expert_indices[k]]++;
       }
     }
     /**
@@ -148,6 +184,7 @@ class LLData {
     for (size_t i = 0; i < num_tokens; i++) {
       for (int k = 0; k < num_topk; k++) {
         h_topk_idx[i * num_topk + k] = (i * num_topk + k) % num_experts;
+        expert_token_count[h_topk_idx[i * num_topk + k]]++;
       }
     }
     /**
@@ -155,25 +192,5 @@ class LLData {
      */
     CHECK_HIP(hipMemcpy(topk_idx, h_topk_idx.data(),
                         topk_idx_size * sizeof(int64_t), hipMemcpyHostToDevice));
-  }
-
-  // Function to generate input data
-  void generate_data() {
-    size_t x_size = num_tokens * hidden;
-
-    // Launch kernel to fill input data (X)
-    int threads_per_block = 1024;
-    int blocks_per_grid = num_tokens; // one block per token
-    data_kernel<<<blocks_per_grid, threads_per_block>>>(X, hidden);
-    CHECK_HIP(hipDeviceSynchronize());
-
-    switch (init_mode) {
-      case InitMode::Deterministic:
-        generate_topk_deterministic();
-        break;
-      case InitMode::Random:
-        generate_topk_random();
-        break;
-    }
   }
 };
