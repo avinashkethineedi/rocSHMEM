@@ -38,6 +38,10 @@ class LLDeepEP {
   int*      packed_recv_count {nullptr};
   int*      global_atomic_counter {nullptr};
 
+  // Combine buffers
+  T*        combined_x {nullptr};
+
+
  public:
   LLDeepEP(int num_tokens_, int hidden_, int num_topk_, int num_experts_)
       : num_tokens(num_tokens_), hidden(hidden_),
@@ -85,10 +89,17 @@ class LLDeepEP {
 
   ~LLDeepEP() {
     CHECK_HIP(hipFree(workspace));
+
+    // Free dispatch buffers
     CHECK_HIP(hipFree(packed_recv_x));
     CHECK_HIP(hipFree(packed_recv_src_info));
     CHECK_HIP(hipFree(packed_recv_layout_range));
     CHECK_HIP(hipFree(packed_recv_count));
+
+    // Free combine buffers
+    CHECK_HIP(hipFree(combined_x));
+
+    // Free rocSHMEM buffer
     rocshmem_free(rdma_buffer_ptr);
     comm_finalize();
   }
@@ -110,6 +121,9 @@ class LLDeepEP {
     LLBuffer& buffer = ll_layout.buffers[ll_buffer_idx];
     LLBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
 
+    // Hip memset global_atomic_counter to zero
+    CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0, sizeof(int)));
+
     // Launch dispatch kernel
     ll_kernels::dispatch<T>(packed_recv_x, packed_recv_src_info,
       packed_recv_layout_range, packed_recv_count, global_atomic_counter,
@@ -118,11 +132,14 @@ class LLDeepEP {
       next_buffer.clean_meta().first, next_buffer.clean_meta().second,
       num_tokens, hidden, num_topk, num_experts, rank, num_ranks, workspace);
 
-    // Synchronize to ensure dispatch is complete
+    /**
+     * TODO: Synchronize using stream instead of hipDeviceSynchronize
+     * Remove MPI_Barrier as well after stream sync
+     */
     CHECK_HIP(hipDeviceSynchronize());
-
     MPI_Barrier(MPI_COMM_WORLD);
 
+    //--- DEBUG FUNCTIONS ---
     // Print rdma_x (buffer.dispatch_send_buffer) for debugging
     // print_rdma_x(buffer.dispatch_send_buffer);
 
@@ -133,11 +150,44 @@ class LLDeepEP {
     // print_atomic_counters();
 
     // Print dispatch recv counts
-    print_dispatch_recv_counts(num_local_experts,
-        buffer.dispatch_recv_count_buffer);
+    // print_dispatch_recv_counts(num_local_experts,
+    //     buffer.dispatch_recv_count_buffer);
 
     // Print packed recv buffers
     // print_packed_recv_buffers(num_local_experts);
+  }
+
+  void ll_combine() { // hipStream_t stream : TODO: pass stream
+    int num_local_experts {num_experts / num_ranks};
+
+    // Buffer control
+    LLBufferLayout<T> ll_layout(rdma_buffer_ptr, num_tokens,
+                       hidden, num_ranks, num_experts);
+    LLBuffer& buffer = ll_layout.buffers[ll_buffer_idx];
+    LLBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
+
+    // Hip memset global_atomic_counter to zero
+    CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0, sizeof(int)));
+
+    // Launch combine kernel
+    ll_kernels::combine<T>(combined_x, buffer.combine_recv_buffer,
+      buffer.combine_recv_flag_buffer, buffer.combine_send_buffer,
+      packed_recv_x, ll_data.topk_idx, packed_recv_src_info,
+      packed_recv_layout_range, global_atomic_counter,
+      next_buffer.clean_meta().first, next_buffer.clean_meta().second,
+      num_tokens, num_topk, hidden, num_experts, rank, num_ranks, workspace);
+
+    /**
+     * TODO: Synchronize using stream instead of hipDeviceSynchronize
+     * Remove MPI_Barrier as well after stream sync
+     */
+    CHECK_HIP(hipDeviceSynchronize());
+    MPI_Barrier(MPI_COMM_WORLD);
+
+    //--- DEBUG FUNCTIONS ---
+    // Print combine send buffer for debugging
+    // print_combine_send_buffer(buffer.combine_send_buffer);
+
   }
 
  private:
@@ -213,6 +263,8 @@ class LLDeepEP {
     size_t packed_recv_count_bytes =
         num_local_experts * sizeof(int);
 
+    size_t combined_x_bytes = num_tokens * hidden * sizeof(T);
+
     // Dimemsions: [num_local_experts][num_ranks][num_tokens][hidden]
     CHECK_HIP(hipMalloc(&packed_recv_x, packed_recv_x_bytes));
     // Dimensions: [num_local_experts][num_ranks][num_tokens]
@@ -222,12 +274,57 @@ class LLDeepEP {
                         packed_recv_layout_range_bytes));
     // Dimensions: [num_local_experts]
     CHECK_HIP(hipMalloc(&packed_recv_count, packed_recv_count_bytes));
+    // Dimensions: [num_tokens][hidden]
+    CHECK_HIP(hipMalloc(&combined_x, combined_x_bytes));
     CHECK_HIP(hipMalloc(&global_atomic_counter, sizeof(int)));
   }
 
   /**
    * DEBUG FUNCTIONS
    */
+
+  // Print combine send buffer for debugging
+  void print_combine_send_buffer(void* combine_send_buffer) {
+    T* combine_send_buffer_t =
+        reinterpret_cast<T*>(combine_send_buffer);
+    int* packed_send_src_info_t =
+        reinterpret_cast<int*>(packed_recv_src_info);
+    int num_local_experts = num_experts / num_ranks;
+    const size_t num_T_per_slot = hidden + (sizeof(int) / sizeof(T));
+    for (int e = 0; e < num_local_experts; e++) {
+      std::cout << "Expert " << (rank * num_local_experts + e)
+                << "[local expert " << e << "]:\n";
+      for (int r = 0; r < num_ranks; r++) {
+        std::cout << "  To Rank " << r << ":\n";
+        // Starting offset and number of tokens sent to rank r
+        int64_t *layout_range = reinterpret_cast<int64_t*>(
+            packed_recv_layout_range + (e * num_ranks + r));
+        int num_tokens_from_r = reinterpret_cast<int*>(
+            layout_range)[0];
+        int offset_for_r = reinterpret_cast<int*>(
+            layout_range)[1];
+        std::cout << "    Num tokens: " << num_tokens_from_r
+                  << ", Offset: " << offset_for_r
+                  << ", packed: " << *layout_range
+                  << ", addr: " << layout_range <<"\n";
+        for (int t = 0; t < num_tokens_from_r; t++) {
+          // int offset = e * num_ranks * num_tokens * hidden +
+          //              (offset_for_r + t) * hidden + sizeof(int)/sizeof(T);
+          int offset = e * num_ranks * num_tokens * num_T_per_slot +
+                       (offset_for_r + t) * num_T_per_slot +
+                       sizeof(int)/sizeof(T);
+          std::cout << "      Token " << t << ": (Index: "
+                    << packed_send_src_info_t[e * num_ranks * num_tokens +
+                                              (offset_for_r + t)]
+                    << ") " << " Addr: " << &combine_send_buffer_t[offset] << " ";
+          for (int h = 0; h < hidden; h++) {
+            std::cout << combine_send_buffer_t[offset + h] << " ";
+          }
+          std::cout << std::endl;
+        }
+      }
+    }
+  }
 
   // Print Ranks and the experts assigned to them
   void print_expert_assignment() {
@@ -293,7 +390,7 @@ class LLDeepEP {
           std::cout << "      Token " << t << ": (Index: "
                     << packed_recv_src_info_t[e * num_ranks * num_tokens +
                                               (offset_for_r + t)]
-                    << ") ";
+                    << ") " << " Addr: " << &packed_recv_x_t[offset] << " ";
           for (int h = 0; h < hidden; h++) {
             std::cout << packed_recv_x_t[offset + h] << " ";
           }
@@ -329,13 +426,16 @@ class LLDeepEP {
     for (int i = 0; i < num_tokens; i++) {
       std::cout << "Token " << i << ": ";
       int token_idx = *(reinterpret_cast<int*>(
-          reinterpret_cast<uint8_t*>(rdma_x) + i * (sizeof(int) + hidden * sizeof(T))));
+          reinterpret_cast<uint8_t*>(rdma_x) + i * (sizeof(int) +
+          hidden * sizeof(T))));
       int *token_addr = reinterpret_cast<int*>(
-          reinterpret_cast<uint8_t*>(rdma_x) + i * (sizeof(int) + hidden * sizeof(T)));
+          reinterpret_cast<uint8_t*>(rdma_x) + i * (sizeof(int) +
+          hidden * sizeof(T)));
       std::cout << "[Addr: " << token_addr << "] ";
       std::cout << "(Index: " << token_idx << ") ";
       for (int j = 0; j < hidden; j++) {
-        std::cout << rdma_x_t[i * (hidden + sizeof(int)/sizeof(T)) + sizeof(int)/sizeof(T) + j] << " ";
+        std::cout << rdma_x_t[i * (hidden + sizeof(int)/sizeof(T)) +
+                              sizeof(int)/sizeof(T) + j] << " ";
       }
       std::cout << std::endl;
     }
@@ -371,7 +471,8 @@ class LLDeepEP {
           std::cout << "[Addr: " << token_addr << "] ";
           std::cout << "  Token " << token << ": (Index: " << token_idx << ") ";
           for (int j = 0; j < hidden; j++) {
-            std::cout << rdma_recv_x_t[offset / sizeof(T) + sizeof(int)/sizeof(T) + j] << " ";
+            std::cout << rdma_recv_x_t[offset / sizeof(T) +
+                         sizeof(int)/sizeof(T) + j] << " ";
           }
           std::cout << std::endl;
         }

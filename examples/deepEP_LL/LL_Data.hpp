@@ -79,7 +79,7 @@ class LLData {
     }
 
     // Debug prints
-    // print();
+    print();
     // print_data();
   }
 

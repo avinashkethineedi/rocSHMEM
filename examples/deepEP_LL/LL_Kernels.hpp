@@ -21,7 +21,11 @@ __forceinline__ __device__ void warp_sync() {
   __builtin_amdgcn_fence(__ATOMIC_ACQUIRE, "wavefront");
 }
 
-// Grid barrier function
+/**
+ * Grid barrier implementation using a global counter.
+ * All the work-groups must be co-resident on the GPU for this to work
+ * correctly.
+ */
 __forceinline__ __device__ void grid_barrier(int* global_counter,
     int num_blocks) {
   __threadfence();
@@ -67,7 +71,6 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
     int *atomic_counter_per_expert, int *atomic_finish_counter_per_expert,
     int64_t *next_clean, int num_next_clean_int, int num_tokens, int hidden,
     int num_topk, int num_experts, int rank, int num_ranks) {
-  // Kernel implementation goes here
   const int wg_id = static_cast<int>(blockIdx.x);
   const int thread_id = static_cast<int>(threadIdx.x);
   const int warp_id = thread_id / kWarpSize;
@@ -92,9 +95,9 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
    * TODO: Skip the sending phase based on the phase flag
    */
   if (thread_id == 0 && wg_id == 0) {
-    printf("num_wgs: %d, num_warps: %d, hidden: %d, (bytes: %ld, num_int: %ld), "
-           "num_tokens: %d, num_topk: %d, num_experts: %d, rank: %d, "
-           "num_ranks: %d, num_bytes_per_msg: %ld\n",
+    printf("Dispatch Kernel: num_wgs: %d, num_warps: %d, hidden: %d, "
+           "(bytes: %ld, num_int: %ld), num_tokens: %d, num_topk: %d, "
+           "num_experts: %d, rank: %d, num_ranks: %d, num_bytes_per_msg: %ld\n",
            num_wgs, num_warps, hidden, hidden_bytes, num_int_per_msg,
            num_tokens, num_topk, num_experts, rank, num_ranks, num_bytes_per_msg);
   }
@@ -346,7 +349,7 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
   }
 }
 
-// Dispatch function to launch the kernel
+// Dispatch function to launch the dispatch kernel
 template <typename T>
 void dispatch(void *packed_recv_x, int* packed_recv_src_info,
     int64_t* packed_recv_layout_range, int* packed_recv_count,
@@ -355,9 +358,8 @@ void dispatch(void *packed_recv_x, int* packed_recv_src_info,
     int64_t* next_clean, int num_next_clean_int, int num_tokens, int hidden,
     int num_topk, int num_experts, int rank, int num_ranks,
     void* workspace) {
-  // Kernel launch code goes here
-  constexpr int kNumWarpsPerGroup = 8;
-  constexpr int kNumWarpGroups = 2;
+  constexpr int kNumWarpsPerGroup = 4;
+  constexpr int kNumWarpGroups = 4;
 
   constexpr int kNumMaxTopK = 9;
   // TODO: Add assertions to check that kNumMaxTopK + 1 <= kNumWarpGroups * kNumWarpsPerGroup
@@ -417,4 +419,242 @@ void dispatch(void *packed_recv_x, int* packed_recv_src_info,
       num_tokens, hidden, num_topk, num_experts, rank, num_ranks);
 
 }
+
+// Combine kernel for low-latency deepEP
+template <int kNumWarpsPerGroup, int kNumWarpGroups, typename T>
+__global__ __launch_bounds__(kNumWarpsPerGroup * kNumWarpGroups * kWarpSize, 1)
+void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
+    void* rdma_send_x, const void* x, const int64_t* topk_idx,
+    const int* src_info, const int64_t* layout_range,
+    int* global_atomic_counter, int64_t* next_clean, int num_next_clean_int,
+    int* atomic_clean_flag, int num_tokens, int num_topk, int hidden,
+    int num_experts, int rank, int num_ranks) {
+  const int wg_id = static_cast<int>(blockIdx.x);
+  const int thread_id = static_cast<int>(threadIdx.x);
+  const int warp_id = thread_id / kWarpSize;
+  const int num_wgs = static_cast<int>(gridDim.x);
+  const int num_threads = static_cast<int>(blockDim.x);
+  const int lane_id = thread_id % kWarpSize;
+  constexpr int num_warps = kNumWarpsPerGroup * kNumWarpGroups;
+  const int num_local_experts = num_experts / num_ranks;
+  const int warp_group_id = warp_id / kNumWarpsPerGroup;
+  const int sub_warp_id = warp_id % kNumWarpsPerGroup;
+  const int responsible_expert_id = wg_id * kNumWarpGroups + warp_group_id;
+
+  // size of each slot in bytes
+  const size_t num_bytes_per_slot = sizeof(int) + static_cast<size_t>(hidden) *
+                                    sizeof(T);
+  const size_t num_T_per_slot = num_bytes_per_slot / sizeof(T);
+
+  // Shared memory to synchronize sub-warps in a warp group
+  __syncthreads();
+  constexpr int max_num_warps = 16;
+  __shared__ volatile int sync_large_warp_counters[max_num_warps];
+  // initialize the shared memory to zero
+  if (thread_id < max_num_warps) {
+    sync_large_warp_counters[thread_id] = 0;
+  }
+  __syncthreads();
+
+  /**
+   * TODO: Assert if sizeof(int) % sizeof(T) != 0
+   */
+
+  /**
+   * TODO: Skip the sending phase based on the phase flag
+   */
+  // printf for debugging
+  if (thread_id == 0 && wg_id == 0) {
+    printf("Combine Kernel: num_wgs: %d, num_warps: %d, hidden: %d, "
+           "(bytes per slot: %ld, num_T per slot: %ld), num_tokens: %d, "
+           "num_topk: %d, num_experts: %d, rank: %d, num_ranks: %d\n",
+           num_wgs, num_warps, hidden, num_bytes_per_slot, num_T_per_slot,
+           num_tokens, num_topk, num_experts, rank, num_ranks);
+  }
+
+  // Clean up next buffer
+  if (wg_id == 0 && warp_group_id == 0 && sub_warp_id == 0) {
+    for (int i = lane_id; i < num_next_clean_int; i += kWarpSize)
+      next_clean[i] = 0;
+
+    warp_sync();
+    // Why is this required..?
+    if (lane_id == 0)
+      __hip_atomic_fetch_add(atomic_clean_flag, num_experts,
+                             __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
+  }
+
+  // Issue IBGDA sends
+  if (responsible_expert_id < num_experts) {
+    const int dst_rank = responsible_expert_id / num_local_experts;
+    const int local_expert_idx = responsible_expert_id % num_local_experts;
+    const int global_expert_idx = rank * num_local_experts + local_expert_idx;
+    const int64_t *layout_info = &layout_range[local_expert_idx * num_ranks +
+                                               dst_rank];
+    const T* const local_x = reinterpret_cast<const T*>(x) + local_expert_idx *
+                             num_ranks * num_tokens * hidden;
+    const int* const local_src_info = &src_info[local_expert_idx *
+                                                num_ranks * num_tokens];
+    T* const rdma_send_x_ptr = reinterpret_cast<T*>(rdma_send_x) +
+                               local_expert_idx * num_ranks * num_tokens *
+                               num_T_per_slot;
+    // Unpack layout info
+    const int num_tokens_to_send = reinterpret_cast<const int*>(layout_info)[0];
+    const int offset             = reinterpret_cast<const int*>(layout_info)[1];
+
+    // Print for debugging
+    // if (sub_warp_id == 0 && lane_id == 0) {
+    //   printf("Combine Kernel: Expert: %d, global idx: %d, local idx: %d "
+    //          " rank: %d tokens: %d, offset: %d, sub_warp_id: %d, warp_grp_id: %d\n",
+    //          responsible_expert_id, global_expert_idx, local_expert_idx,
+    //          dst_rank, num_tokens_to_send, offset, sub_warp_id, warp_group_id);
+    // }
+    // Issue IBGDA sends
+    for (int token_idx = offset + sub_warp_id; token_idx < offset + num_tokens_to_send;
+         token_idx += kNumWarpGroups) {
+      const T* const x_ptr = local_x + token_idx * hidden;
+      int* const rdma_send_x_tkn_idx = reinterpret_cast<int*>(
+          rdma_send_x_ptr + token_idx * num_T_per_slot);
+      T* const rdma_send_x_tkn_data = reinterpret_cast<T*>(
+          rdma_send_x_tkn_idx + 1);
+
+      /**
+       * Copy token data to local buffer for local sends or copy token data to
+       * symmetric heap buffer to issue rocSHMEM put for remote sends
+       */
+      // Token index
+      const int src_token_idx = local_src_info[token_idx];
+      T* const buf_ptr = rdma_send_x_tkn_data;
+      T* const dst_ptr = reinterpret_cast<T*>(rdma_recv_x) +
+                         (global_expert_idx * num_tokens + src_token_idx) *
+                         num_T_per_slot + sizeof(int)/sizeof(T);
+
+      // // Print for debugging
+      // if (lane_id == 0) {
+      //   printf("Expert: %d, global idx: %d, local idx: %d, Rank: %d, "
+      //          " Token: %d / %d (%d), (src idx: %d),  x_ptr: %p, buf_ptr: %p, "
+      //          " Sub_warp_id: %d, warp_grp_id: %d, ptr_diff: %ld, (%ld, %ld)\n",
+      //          responsible_expert_id, global_expert_idx, local_expert_idx,
+      //          dst_rank, token_idx, num_tokens_to_send, offset, src_token_idx, x_ptr, buf_ptr,
+      //          sub_warp_id, warp_group_id, (uint8_t*)rdma_recv_x - (uint8_t*)dst_ptr,
+      //          (global_expert_idx * num_tokens * src_token_idx) * num_bytes_per_slot +
+      //          sizeof(int), (global_expert_idx * num_tokens * src_token_idx) *
+      //          num_T_per_slot + sizeof(int)/sizeof(T));
+      // }
+
+      if (dst_rank == rank) {
+        // Local copy for same-rank communication
+        // Write the token index
+        warp_copy<T>(dst_ptr, x_ptr, hidden);
+      } else {
+        // Copy to symmetric heap buffer for remote RDMA write
+        // Write the token index
+        warp_copy<T>(buf_ptr, x_ptr, hidden);
+        // Issue RDMA write using rocSHMEM
+        rocshmem_putmem_nbi_wave(dst_ptr, buf_ptr, hidden * sizeof(T), dst_rank);
+      }
+    }
+
+    // Synchronize sub-warps in the warp group
+    if (lane_id == 0) {
+      volatile int ret = __hip_atomic_fetch_add(
+          &sync_large_warp_counters[warp_group_id], 1,
+          __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
+      warp_sync();
+      while (sync_large_warp_counters[warp_group_id] < kNumWarpsPerGroup);
+    }
+
+    if (sub_warp_id == 0 && lane_id == 0) {
+      //
+      while (__hip_atomic_load(atomic_clean_flag, __ATOMIC_ACQUIRE,
+                               __HIP_MEMORY_SCOPE_AGENT) == 0);
+
+      // Issue atomic add to notify expert about completed sends
+      if (dst_rank != rank) {
+        rocshmem_long_atomic_add(rdma_recv_flag + global_expert_idx, 1,
+                                 dst_rank);
+      } else {
+        // Local store for same-rank communication
+        __hip_atomic_store(rdma_recv_flag + global_expert_idx, 1,
+                           __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
+      }
+      __hip_atomic_fetch_add(atomic_clean_flag, -1,
+                             __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
+    }
+  }
+
+  // Wait until data is received for the assigned expert
+  if (responsible_expert_id < num_experts && sub_warp_id == 0 && lane_id == 0) {
+    while (__hip_atomic_load(rdma_recv_flag + responsible_expert_id,
+                             __ATOMIC_ACQUIRE, __HIP_MEMORY_SCOPE_AGENT) == 0);
+  }
+
+  // Grid barrier to ensure all WGs have completed receiving
+  grid_barrier(global_atomic_counter, num_wgs);
+
+}
+
+// Combine function to launch the combine kernel
+template <typename T>
+void combine(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
+    void* rdma_send_x, const void* x, const int64_t* topk_idx,
+    const int* src_info, const int64_t* layout_range,
+    int* global_atomic_counter, int64_t* next_clean, int num_next_clean_int,
+    int num_tokens, int num_topk, int hidden, int num_experts, int rank,
+    int num_ranks, void* workspace) {
+
+  constexpr int kNumWarpsPerGroup = 4;
+  constexpr int kNumWarpGroups = 4;
+
+  constexpr int kNumMaxTopK = 9;
+  // TODO: Add assertions
+
+  const auto num_warps   = kNumWarpGroups * kNumWarpsPerGroup;
+  const auto num_wgs     = cell_div(num_experts, kNumWarpGroups);
+  const auto num_threads = num_warps * kWarpSize;
+
+  int* atomic_clean_flag = reinterpret_cast<int*>(workspace);
+  // TODO: Add assertions to check workspace size
+
+  dim3 grid(num_wgs);
+  dim3 block(num_threads);
+
+  /**
+   * Calculate the maximum number of co-resident work-groups per compute unit
+   * based on the resource usage of the kernel
+   */
+  int max_co_resident_wgs_per_cu = 0;
+  CHECK_HIP(hipOccupancyMaxActiveBlocksPerMultiprocessor(
+      &max_co_resident_wgs_per_cu,
+      combine_kernel<kNumWarpsPerGroup, kNumWarpGroups, T>,
+      num_threads,
+      0));
+  // Get the number of compute units
+  hipDeviceProp_t device_prop;
+  CHECK_HIP(hipGetDeviceProperties(&device_prop, 0));
+  const int num_cus = device_prop.multiProcessorCount;
+  const int max_sustainable_wgs = max_co_resident_wgs_per_cu * num_cus;
+
+  // printf for debugging
+  std::cout << "Max co-resident WGs per CU: " << max_co_resident_wgs_per_cu
+            << ", Num CUs: " << num_cus
+            << ", Max sustainable WGs: " << max_sustainable_wgs << std::endl;
+
+  std::cout << "Launching combine kernel with grid (" << grid.x << ", "
+            << grid.y << ", " << grid.z << ") and block (" << block.x
+            << ", " << block.y << ", " << block.z << ")\n"
+            << ", num_warps: " << num_warps << ", num_wgs: " << num_wgs
+            << ", num_threads: " << num_threads
+            << ", kNumWarpsPerGroup: " << kNumWarpsPerGroup
+            << ", kNumWarpGroups: " << kNumWarpGroups << std::endl;
+
+  combine_kernel<kNumWarpsPerGroup, kNumWarpGroups, T><<<grid, block>>>(
+      combined_x, rdma_recv_x, rdma_recv_flag, rdma_send_x, x, topk_idx,
+      src_info, layout_range, global_atomic_counter, next_clean,
+      num_next_clean_int, atomic_clean_flag, num_tokens, num_topk, hidden,
+      num_experts, rank, num_ranks);
+
+}
+
+
 }  // namespace ll_kernels

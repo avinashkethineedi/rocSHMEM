@@ -10,12 +10,24 @@ struct LLBuffer {
   // Number of signaling elements = number of experts
   int num_sig_elems {0};
 
-  // Dispatch buffers
+  /**
+   * Dispatch buffers
+   * Dimensions:
+   * - Send buffer: [num_tokens, hidden + 1]
+   * - Recv buffer: [num_experts * num_tokens, hidden + 1
+   * - Recv count buffer: [num_experts]
+   */
   void*    dispatch_send_buffer {nullptr};
   void*    dispatch_recv_buffer {nullptr};
   int64_t* dispatch_recv_count_buffer {nullptr};
 
-  // Combine buffers
+  /**
+   * Combine buffers
+   * Dimensions:
+   * - Send buffer: [num_experts * num_tokens, hidden + 1]
+   * - Recv buffer: [num_experts * num_tokens, hidden + 1]
+   * - Recv flag buffer: [num_experts]
+   */
   void*    combine_send_buffer {nullptr};
   void*    combine_recv_buffer {nullptr};
   int64_t* combine_recv_flag_buffer {nullptr};
@@ -34,6 +46,7 @@ struct LLBuffer {
 template <typename T>
 struct LLBufferLayout {
   size_t total_bytes {0};
+  // Is double buffering required?
   LLBuffer buffers[2];
 
   template <typename out_ptr_t = void*,
@@ -56,33 +69,10 @@ struct LLBufferLayout {
     // Send buffers sizes
     size_t dispatch_send_buffer_bytes = num_tokens *
                                         num_bytes_per_dispatch_msg;
-    size_t combine_send_buffer_bytes  = num_experts *
-                                        num_tokens *
+    size_t combine_send_buffer_bytes  = num_experts * num_tokens *
                                         num_bytes_per_combine_msg;
     size_t send_buffer_bytes = std::max(dispatch_send_buffer_bytes,
                                         combine_send_buffer_bytes);
-
-    // std::cout << "Dispatch send buffer bytes: "
-    //           << dispatch_send_buffer_bytes
-    //           << ", Combine send buffer bytes: "
-    //           << combine_send_buffer_bytes
-    //           << ", num bytes per dispatch msg: "
-    //           << num_bytes_per_dispatch_msg
-    //           << ", sizeof(T): "
-    //           << sizeof(T)
-    //           << ", num tokens: "
-    //           << num_tokens
-    //           << ", num experts: "
-    //           << num_experts
-    //           << ", hidden: "
-    //           << hidden
-    //           << ", send buffer bytes: "
-    //           << send_buffer_bytes
-    //           << ", sizeof(int): "
-    //           << sizeof(int)
-    //           << ", send_buffer_bytes % sizeof(int): "
-    //           << (send_buffer_bytes % sizeof(int) == 0)
-    //           << std::endl;
 
     ASSERT(send_buffer_bytes % sizeof(int) == 0);
     total_bytes += send_buffer_bytes * 2;
@@ -100,6 +90,18 @@ struct LLBufferLayout {
     // Symmetric signaling buffers
     size_t signaling_buffer_bytes = num_experts * sizeof(int64_t);
     total_bytes += signaling_buffer_bytes * 2;
+
+    // Print info for debugging
+    // std::cout << "Dispatch Buffers: "
+    //           << "\n  Send Buffer Bytes = " << dispatch_send_buffer_bytes
+    //           << "\n  Recv Buffer Bytes = " << dispatch_recv_buffer_bytes
+    //           << "\n  Signaling Buffer Bytes = " << signaling_buffer_bytes
+    //           << "\nCombine Buffers: "
+    //           << "\n  Send Buffer Bytes = " << combine_send_buffer_bytes
+    //           << "\n  Recv Buffer Bytes = " << combine_recv_buffer_bytes
+    //           << "\n  Signaling Buffer Bytes = " << signaling_buffer_bytes
+    //           << "\nTotal LL Buffer Bytes = " << total_bytes
+    //           << std::endl;
 
     // Assign pointers
     for (int i = 0; i < 2; ++ i) {
