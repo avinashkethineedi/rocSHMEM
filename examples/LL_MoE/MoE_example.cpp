@@ -22,7 +22,7 @@
  * IN THE SOFTWARE.
  *****************************************************************************/
 
-#include "LL_DeepEP.hpp"
+#include "LL_MoE.hpp"
 #include <unistd.h>
 
 using dtype = short;
@@ -35,7 +35,7 @@ using dtype = short;
  *   - dispatch kernel  (token -> expert / rank)
  *   - combine kernel   (expert -> token / rank)
  *
- * It is NOT a performance model; it is a communication-pattern model.
+ * NOTE: It is NOT a performance model; it is a communication-pattern model.
  *****************************************************************************/
 
 int main (int argc, char **argv)
@@ -86,18 +86,25 @@ int main (int argc, char **argv)
     }
   }
 
-  LLDeepEP<dtype> ll_deepep(num_tokens, hidden, num_topk, num_experts);
+  LLMoE<dtype> ll_moe(num_tokens, hidden, num_topk, num_experts);
 
-  rank = ll_deepep.get_rank();
-  num_ranks = ll_deepep.get_num_ranks();
+  rank = ll_moe.get_rank();
+  num_ranks = ll_moe.get_num_ranks();
 
   std::cout << "rank: " << rank << ", n_RANKs: " << num_ranks << std::endl;
 
   // Run dispatch and combine multiple times
   for (int iter = 0; iter < num_iterations; iter++) {
-      ll_deepep.ll_dispatch();
-      ll_deepep.ll_combine();
+      ll_moe.ll_dispatch();
+      ll_moe.ll_combine();
+  }
+
+  // Print all the iterations were successful
+  if (rank == 0) {
+      std::cout << "All " << num_iterations
+                << " iterations completed successfully!" << std::endl;
   }
 
   return 0;
+
 }

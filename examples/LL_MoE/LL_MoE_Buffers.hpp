@@ -48,7 +48,7 @@
  * - Separate send and receive buffers
  * - Separate signaling buffers for dispatch and combine
  */
-struct LLBuffer {
+struct LLMoEBuffer {
   // Number of signaling elements = number of experts
   int num_sig_elems {0};
 
@@ -82,13 +82,13 @@ struct LLBuffer {
 
 /**
  * Low-latency buffer layout
- * - Two sets of LLBuffer for double buffering
+ * - Two sets of LLMoEBuffer for double buffering
  * - Calculates total bytes required for allocation
  */
 template <typename T>
-struct LLBufferLayout {
+struct LLMoEBufferLayout {
   size_t total_bytes {0};
-  LLBuffer buffers[2];
+  LLMoEBuffer buffers[2];
 
   template <typename out_ptr_t = void*,
             typename count_ptr_t = uint8_t*,
@@ -98,7 +98,7 @@ struct LLBufferLayout {
           reinterpret_cast<count_ptr_t>(ptr) + count);
   }
 
-  LLBufferLayout(void* rdma_buffer, const int num_tokens, const int hidden,
+  LLMoEBufferLayout(void* rdma_buffer, const int num_tokens, const int hidden,
       const int num_ranks, const int num_experts) {
     
     const int num_local_experts = num_experts / num_ranks;
@@ -160,7 +160,7 @@ struct LLBufferLayout {
 template <typename T>
 size_t get_rmda_size_hint(int num_max_dispatch_tokens_per_rank, int hidden,
     int num_ranks, int num_experts) {
-  LLBufferLayout<T> ll_buffer_layout(nullptr, num_max_dispatch_tokens_per_rank,
-                      hidden, num_ranks, num_experts);
+  LLMoEBufferLayout<T> ll_buffer_layout(nullptr, num_max_dispatch_tokens_per_rank,
+                        hidden, num_ranks, num_experts);
   return ll_buffer_layout.total_bytes;
 }

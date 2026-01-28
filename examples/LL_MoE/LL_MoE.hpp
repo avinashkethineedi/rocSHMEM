@@ -24,14 +24,14 @@
 
 #include <mpi.h>
 
-#include "LL_Data.hpp"
-#include "LL_Buffers.hpp"
-#include "LL_Kernels.hpp"
+#include "LL_MoE_Data.hpp"
+#include "LL_MoE_Buffers.hpp"
+#include "LL_MoE_Kernels.hpp"
 
 using namespace rocshmem;
 
 template<typename T>
-class LLDeepEP {
+class LLMoE {
  private:
   int rank {0}, num_ranks {0};
   int device_id {0};
@@ -50,7 +50,7 @@ class LLDeepEP {
   const int num_experts {0};
 
   // LL_DeepEP data
-  LLData<T> ll_data;
+  LLMoEData<T> ll_moe_data;
 
   // LL Buffer index
   int ll_buffer_idx {0};
@@ -70,10 +70,10 @@ class LLDeepEP {
 
 
  public:
-  LLDeepEP(int num_tokens_, int hidden_, int num_topk_, int num_experts_)
+  LLMoE(int num_tokens_, int hidden_, int num_topk_, int num_experts_)
       : num_tokens(num_tokens_), hidden(hidden_),
         num_topk(num_topk_), num_experts(num_experts_),
-        ll_data(num_tokens_, hidden_, num_topk_, num_experts_) {
+        ll_moe_data(num_tokens_, hidden_, num_topk_, num_experts_) {
 
     // Initialize rocSHMEM
     comm_init();
@@ -85,7 +85,7 @@ class LLDeepEP {
      * Generate input data after COMM init, because it sets different device
      * IDs for different ranks.
      */
-    ll_data.generate_data();
+    ll_moe_data.generate_data();
 
     CHECK_HIP(hipExtMallocWithFlags(&workspace, NUM_WORKSPACE_BYTES,
               hipDeviceMallocUncached));
@@ -111,7 +111,7 @@ class LLDeepEP {
     CHECK_HIP(hipDeviceSynchronize());
   }
 
-  ~LLDeepEP() {
+  ~LLMoE() {
     CHECK_HIP(hipFree(workspace));
 
     // Free dispatch buffers
@@ -140,10 +140,10 @@ class LLDeepEP {
     int num_local_experts {num_experts / num_ranks};
 
     // Buffer control
-    LLBufferLayout<T> ll_layout(rdma_buffer_ptr, num_tokens,
+    LLMoEBufferLayout<T> ll_layout(rdma_buffer_ptr, num_tokens,
                        hidden, num_ranks, num_experts);
-    LLBuffer& buffer = ll_layout.buffers[ll_buffer_idx];
-    LLBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
+    LLMoEBuffer& buffer = ll_layout.buffers[ll_buffer_idx];
+    LLMoEBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
 
     // Hip memset global_atomic_counter to zero
     CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0, sizeof(int), stream));
@@ -152,7 +152,7 @@ class LLDeepEP {
     ll_kernels::dispatch<T>(packed_recv_x, packed_recv_src_info,
       packed_recv_layout_range, packed_recv_count, global_atomic_counter,
       buffer.dispatch_recv_buffer, buffer.dispatch_recv_count_buffer,
-      buffer.dispatch_send_buffer, ll_data.X, ll_data.topk_idx,
+      buffer.dispatch_send_buffer, ll_moe_data.X, ll_moe_data.topk_idx,
       next_buffer.clean_meta().first, next_buffer.clean_meta().second,
       num_tokens, hidden, num_topk, num_experts, rank, num_ranks, workspace,
       stream);
@@ -182,10 +182,10 @@ class LLDeepEP {
     int num_local_experts {num_experts / num_ranks};
 
     // Buffer control
-    LLBufferLayout<T> ll_layout(rdma_buffer_ptr, num_tokens,
+    LLMoEBufferLayout<T> ll_layout(rdma_buffer_ptr, num_tokens,
                        hidden, num_ranks, num_experts);
-    LLBuffer& buffer = ll_layout.buffers[ll_buffer_idx];
-    LLBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
+    LLMoEBuffer& buffer = ll_layout.buffers[ll_buffer_idx];
+    LLMoEBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
 
     // Hip memset global_atomic_counter to zero
     CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0,
@@ -198,7 +198,7 @@ class LLDeepEP {
     // Launch combine kernel
     ll_kernels::combine<T>(combined_x, buffer.combine_recv_buffer,
       buffer.combine_recv_flag_buffer, buffer.combine_send_buffer,
-      packed_recv_x, ll_data.topk_idx, packed_recv_src_info,
+      packed_recv_x, ll_moe_data.topk_idx, packed_recv_src_info,
       packed_recv_layout_range, global_atomic_counter,
       next_buffer.clean_meta().first, next_buffer.clean_meta().second,
       num_tokens, num_topk, hidden, num_experts, rank, num_ranks,
@@ -317,7 +317,7 @@ class LLDeepEP {
     bool all_correct = true;
     for (int i = 0; i < num_tokens; i++) {
       for (int h = 0; h < hidden; h++) {
-        T expected_value = ll_data.X[i * hidden + h] * num_topk;
+        T expected_value = ll_moe_data.X[i * hidden + h] * num_topk;
         T actual_value = combined_x_t[i * hidden + h];
         if (actual_value != expected_value) {
           std::cout << "Mismatch at Token " << i << ", Hidden " << h

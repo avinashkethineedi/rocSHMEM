@@ -27,7 +27,7 @@
 #include <vector>
 
 template <typename T>
-class LLData {
+class LLMoEData {
  public:
 
   // LL_DeepEP parameters
@@ -54,13 +54,13 @@ class LLData {
   InitMode init_mode {InitMode::Deterministic};
 
  public:
-  LLData(int num_tokens_, int hidden_, int num_topk_,
+  LLMoEData(int num_tokens_, int hidden_, int num_topk_,
     int num_experts_, InitMode init_mode_ = InitMode::Deterministic)
       : num_tokens(num_tokens_), hidden(hidden_),
         num_topk(num_topk_), num_experts(num_experts_),
         init_mode(init_mode_), expert_token_count(num_experts, 0) {}
 
-  ~LLData() {
+  ~LLMoEData() {
     if (X) {
       CHECK_HIP(hipFree(X));
     }
@@ -106,7 +106,7 @@ class LLData {
 
  private:
   void print() {
-    std::cout << "LLData:" << std::endl;
+    std::cout << "LLMoEData:" << std::endl;
     std::cout << "  num_tokens: " << num_tokens << std::endl;
     std::cout << "  hidden: " << hidden << std::endl;
     std::cout << "  num_experts: " << num_experts << std::endl;

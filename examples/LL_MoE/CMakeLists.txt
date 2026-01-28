@@ -22,12 +22,12 @@
 # IN THE SOFTWARE.
 ###############################################################################
 
- add_executable(low_latency
-  low_latency.cpp
+ add_executable(ll_moe
+  MoE_example.cpp
 )
 
 target_link_libraries(
-  low_latency
+  ll_moe
   PRIVATE
     roc::rocshmem
     $<TARGET_NAME_IF_EXISTS:MPI::MPI_CXX>

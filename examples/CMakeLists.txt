@@ -64,4 +64,4 @@ foreach(SOURCE_FILE IN LISTS EXAMPLE_SOURCES)
   )
 endforeach()
 
-add_subdirectory(deepEP_LL)
+add_subdirectory(LL_MoE)
