@@ -1,3 +1,27 @@
+/******************************************************************************
+ * Copyright (c) Advanced Micro Devices, Inc. All rights reserved.
+ *
+ * SPDX-License-Identifier: MIT
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to
+ * deal in the Software without restriction, including without limitation the
+ * rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+ * sell copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING
+ * FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS
+ * IN THE SOFTWARE.
+ *****************************************************************************/
+
 #include <rocshmem/rocshmem.hpp>
 #include "../util.h"
 
@@ -60,6 +84,18 @@ __device__ void warp_copy(T* dst, const T* src, size_t num_elems) {
   }
   __threadfence();
 }
+
+/* ================================= DISPATCH =================================
+ * Dispatch moves token payloads from the *origin rank* to the *destination
+ * expert/rank*, based on routing (topk / expert assignment).
+ *
+ * In DeepEP LL mode, the key idea is that the communication is structured as:
+ *   (A) GPU-side "send" work: write payload into remote-visible buffers +
+ *       publish lightweight signals/counters so receivers know what's ready.
+ *   (B) GPU-side "recv" work: receivers observe signals, then read/consume the
+ *       payload from their receive buffers.
+ *
+ *****************************************************************************/
 
 // Dispatch kernel for low-latency deepEP
 template <int kNumWavesPerGroup, int kNumWaveGroups, typename T>
@@ -397,7 +433,13 @@ void dispatch(void *packed_recv_x, int* packed_recv_src_info,
       num_tokens, hidden, num_topk, num_experts, rank, num_ranks);
 }
 
-// Combine kernel for low-latency deepEP
+/*
+ * ================================= COMBINE ==================================
+ * Combine is the reverse direction of dispatch: it returns expert outputs
+ * back to the originating ranks/tokens
+ *
+ * As with dispatch, we reuse the same pre-allocated RDMA/signal buffers
+ *****************************************************************************/
 template <int kNumWavesPerGroup, int kNumWaveGroups, int kNumMaxTopK, typename T>
 __global__ __launch_bounds__(kNumWavesPerGroup * kNumWaveGroups * kWaveSize, 1)
 void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
