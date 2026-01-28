@@ -46,7 +46,6 @@ struct LLBuffer {
 template <typename T>
 struct LLBufferLayout {
   size_t total_bytes {0};
-  // Is double buffering required?
   LLBuffer buffers[2];
 
   template <typename out_ptr_t = void*,
@@ -90,18 +89,6 @@ struct LLBufferLayout {
     // Symmetric signaling buffers
     size_t signaling_buffer_bytes = num_experts * sizeof(int64_t);
     total_bytes += signaling_buffer_bytes * 2;
-
-    // Print info for debugging
-    // std::cout << "Dispatch Buffers: "
-    //           << "\n  Send Buffer Bytes = " << dispatch_send_buffer_bytes
-    //           << "\n  Recv Buffer Bytes = " << dispatch_recv_buffer_bytes
-    //           << "\n  Signaling Buffer Bytes = " << signaling_buffer_bytes
-    //           << "\nCombine Buffers: "
-    //           << "\n  Send Buffer Bytes = " << combine_send_buffer_bytes
-    //           << "\n  Recv Buffer Bytes = " << combine_recv_buffer_bytes
-    //           << "\n  Signaling Buffer Bytes = " << signaling_buffer_bytes
-    //           << "\nTotal LL Buffer Bytes = " << total_bytes
-    //           << std::endl;
 
     // Assign pointers
     for (int i = 0; i < 2; ++ i) {

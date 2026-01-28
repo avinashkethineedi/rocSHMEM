@@ -47,6 +47,14 @@
   }                                                                       \
 }
 
+#define DEVICE_ASSERT(condition) {                                        \
+  if (!(condition)) {                                                     \
+    printf("Assertion failed: [%s:%d], condition:  %s\n",                 \
+            __FILE__, __LINE__, #condition);                              \
+    abort();                                                              \
+  }                                                                       \
+}
+
 static int get_launcher_local_rank() {
     char *local_rank_str = nullptr;
 

@@ -41,6 +41,9 @@ class LLDeepEP {
   // Combine buffers
   T*        combined_x {nullptr};
 
+  // HIP stream to launch kernels
+  hipStream_t stream;
+
 
  public:
   LLDeepEP(int num_tokens_, int hidden_, int num_topk_, int num_experts_)
@@ -82,9 +85,6 @@ class LLDeepEP {
 
     // Synchronize to ensure all allocations are done
     CHECK_HIP(hipDeviceSynchronize());
-
-    // Print expert assignment (Debug)
-    // print_expert_assignment();
   }
 
   ~LLDeepEP() {
@@ -112,7 +112,7 @@ class LLDeepEP {
     return num_ranks;
   }
 
-  void ll_dispatch() { // hipStream_t stream : TODO: pass stream
+  void ll_dispatch() {
     int num_local_experts {num_experts / num_ranks};
 
     // Buffer control
@@ -122,7 +122,7 @@ class LLDeepEP {
     LLBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
 
     // Hip memset global_atomic_counter to zero
-    CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0, sizeof(int)));
+    CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0, sizeof(int), stream));
 
     // Launch dispatch kernel
     ll_kernels::dispatch<T>(packed_recv_x, packed_recv_src_info,
@@ -130,14 +130,11 @@ class LLDeepEP {
       buffer.dispatch_recv_buffer, buffer.dispatch_recv_count_buffer,
       buffer.dispatch_send_buffer, ll_data.X, ll_data.topk_idx,
       next_buffer.clean_meta().first, next_buffer.clean_meta().second,
-      num_tokens, hidden, num_topk, num_experts, rank, num_ranks, workspace);
+      num_tokens, hidden, num_topk, num_experts, rank, num_ranks, workspace,
+      stream);
 
-    /**
-     * TODO: Synchronize using stream instead of hipDeviceSynchronize
-     * Remove MPI_Barrier as well after stream sync
-     */
-    CHECK_HIP(hipDeviceSynchronize());
-    MPI_Barrier(MPI_COMM_WORLD);
+    // hipStreamSynchronize
+    CHECK_HIP(hipStreamSynchronize(stream));
 
     //--- DEBUG FUNCTIONS ---
     // Print rdma_x (buffer.dispatch_send_buffer) for debugging
@@ -167,7 +164,12 @@ class LLDeepEP {
     LLBuffer& next_buffer = ll_layout.buffers[ll_buffer_idx ^= 1];
 
     // Hip memset global_atomic_counter to zero
-    CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0, sizeof(int)));
+    CHECK_HIP(hipMemsetAsync(global_atomic_counter, 0,
+      sizeof(int), stream));
+
+    // Hip memset combined_x to zero
+    CHECK_HIP(hipMemsetAsync(combined_x, 0,
+      num_tokens * hidden * sizeof(T), stream));
 
     // Launch combine kernel
     ll_kernels::combine<T>(combined_x, buffer.combine_recv_buffer,
@@ -175,18 +177,21 @@ class LLDeepEP {
       packed_recv_x, ll_data.topk_idx, packed_recv_src_info,
       packed_recv_layout_range, global_atomic_counter,
       next_buffer.clean_meta().first, next_buffer.clean_meta().second,
-      num_tokens, num_topk, hidden, num_experts, rank, num_ranks, workspace);
+      num_tokens, num_topk, hidden, num_experts, rank, num_ranks,
+      workspace, stream);
 
-    /**
-     * TODO: Synchronize using stream instead of hipDeviceSynchronize
-     * Remove MPI_Barrier as well after stream sync
-     */
-    CHECK_HIP(hipDeviceSynchronize());
-    MPI_Barrier(MPI_COMM_WORLD);
+    // hipStreamSynchronize
+    CHECK_HIP(hipStreamSynchronize(stream));
 
     //--- DEBUG FUNCTIONS ---
     // Print combine send buffer for debugging
     // print_combine_send_buffer(buffer.combine_send_buffer);
+
+    // Print combined_x for debugging
+    // print_combined_x(combined_x);
+
+    // Verify combined_x data based on the experts it is routed to
+    // verify_combined_x(combined_x);
 
   }
 
@@ -280,8 +285,42 @@ class LLDeepEP {
   }
 
   /**
-   * DEBUG FUNCTIONS
+   * ------------ DEBUG FUNCTIONS ------------
    */
+  // Verify combined_x data based on the experts it is routed to
+  void verify_combined_x(void* combined_x) {
+    T* combined_x_t = reinterpret_cast<T*>(combined_x);
+    bool all_correct = true;
+    for (int i = 0; i < num_tokens; i++) {
+      for (int h = 0; h < hidden; h++) {
+        T expected_value = ll_data.X[i * hidden + h] * num_topk;
+        T actual_value = combined_x_t[i * hidden + h];
+        if (actual_value != expected_value) {
+          std::cout << "Mismatch at Token " << i << ", Hidden " << h
+                    << ": Expected " << expected_value
+                    << ", Actual " << actual_value << std::endl;
+          all_correct = false;
+        }
+      }
+    }
+    if (all_correct) {
+      std::cout << "Verification successful: combined_x is correct." << std::endl;
+    } else {
+      std::cout << "Verification failed: combined_x has mismatches." << std::endl;
+    }
+  }
+
+  // Print combined_x of dimensions [num_tokens][hidden]
+  void print_combined_x(void* combined_x) {
+    T* combined_x_t = reinterpret_cast<T*>(combined_x);
+    for (int i = 0; i < num_tokens; i++) {
+      std::cout << "Token " << i << ": ";
+      for (int j = 0; j < hidden; j++) {
+        std::cout << combined_x_t[i * hidden + j] << " ";
+      }
+      std::cout << std::endl;
+    }
+  }
 
   // Print combine send buffer for debugging
   void print_combine_send_buffer(void* combine_send_buffer) {

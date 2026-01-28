@@ -3,7 +3,7 @@
 
 #define NUM_WORKSPACE_BYTES (32 * 1024 * 1024)
 #define FINISHED_SUM_TAG 1024
-static constexpr int32_t kWarpSize = 64;
+static constexpr int32_t kWaveSize = 64;
 
 using namespace rocshmem;
 
@@ -45,7 +45,7 @@ __forceinline__ __device__ void grid_barrier(int* global_counter,
 
 // Warp reduction sum function
 __forceinline__ __device__ int warp_reduce_sum(int val) {
-  for (int offset = kWarpSize / 2; offset > 0; offset /= 2) {
+  for (int offset = kWaveSize / 2; offset > 0; offset /= 2) {
     val += __shfl_down(val, offset);
   }
   return val;
@@ -54,16 +54,16 @@ __forceinline__ __device__ int warp_reduce_sum(int val) {
 // device warp function to copy the data from source to destination
 template <typename T>
 __device__ void warp_copy(T* dst, const T* src, size_t num_elems) {
-  const int lane_id = threadIdx.x % kWarpSize;
-  for (size_t i = lane_id; i < num_elems; i += kWarpSize) {
+  const int lane_id = threadIdx.x % kWaveSize;
+  for (size_t i = lane_id; i < num_elems; i += kWaveSize) {
     dst[i] = src[i];
   }
   __threadfence();
 }
 
 // Dispatch kernel for low-latency deepEP
-template <int kNumWarpsPerGroup, int kNumWarpGroups, typename T>
-__global__ __launch_bounds__(kNumWarpsPerGroup * kNumWarpGroups * kWarpSize, 1)
+template <int kNumWavesPerGroup, int kNumWaveGroups, typename T>
+__global__ __launch_bounds__(kNumWavesPerGroup * kNumWaveGroups * kWaveSize, 1)
 void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
     int64_t *packed_recv_layout_range, int *packed_recv_count,
     int *global_atomic_counter, void *rdma_recv_x, int64_t *rdma_recv_count,
@@ -73,39 +73,27 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
     int num_topk, int num_experts, int rank, int num_ranks) {
   const int wg_id = static_cast<int>(blockIdx.x);
   const int thread_id = static_cast<int>(threadIdx.x);
-  const int warp_id = thread_id / kWarpSize;
+  const int wave_id = thread_id / kWaveSize;
   const int num_wgs = static_cast<int>(gridDim.x);
-  const int lane_id = thread_id % kWarpSize;
-  constexpr int num_warps = kNumWarpsPerGroup * kNumWarpGroups;
+  const int lane_id = thread_id % kWaveSize;
+  constexpr int num_waves = kNumWavesPerGroup * kNumWaveGroups;
   const int num_local_experts = num_experts / num_ranks;
-  const int warp_group_id = warp_id / kNumWarpsPerGroup;
-  const int sub_warp_id = warp_id % kNumWarpsPerGroup;
-  const int responsible_expert_id = wg_id * kNumWarpGroups + warp_group_id;
+  const int wave_group_id = wave_id / kNumWavesPerGroup;
+  const int sub_wave_id = wave_id % kNumWavesPerGroup;
+  const int responsible_expert_id = wg_id * kNumWaveGroups + wave_group_id;
 
   // size of each token in bytes
   const size_t hidden_bytes = static_cast<size_t>(hidden) * sizeof(T);
   // size of each message in bytes
   const size_t num_bytes_per_msg = sizeof(int) + hidden_bytes;
-  /**
-   * TODO: Add assertions to check the following conditions:
-   * _ASSERT(num_bytes_per_msg % sizeof(int) == 0);
-   */
+
+  DEVICE_ASSERT(num_bytes_per_msg % sizeof(int) == 0);
   const size_t num_int_per_msg = num_bytes_per_msg / sizeof(int);
-  /**
-   * TODO: Skip the sending phase based on the phase flag
-   */
-  if (thread_id == 0 && wg_id == 0) {
-    printf("Dispatch Kernel: num_wgs: %d, num_warps: %d, hidden: %d, "
-           "(bytes: %ld, num_int: %ld), num_tokens: %d, num_topk: %d, "
-           "num_experts: %d, rank: %d, num_ranks: %d, num_bytes_per_msg: %ld\n",
-           num_wgs, num_warps, hidden, hidden_bytes, num_int_per_msg,
-           num_tokens, num_topk, num_experts, rank, num_ranks, num_bytes_per_msg);
-  }
   
   // Expert counts
-  __shared__ int shared_num_tokens_sent_per_expert[kNumWarpGroups];
-  if (warp_id < num_warps) {
-    constexpr int num_threads = kNumWarpGroups * kNumWarpsPerGroup * kWarpSize;
+  __shared__ int shared_num_tokens_sent_per_expert[kNumWaveGroups];
+  if (wave_id < num_waves) {
+    constexpr int num_threads = kNumWaveGroups * kNumWavesPerGroup * kWaveSize;
     for (int token_idx = wg_id; token_idx < num_tokens; token_idx += num_wgs) {
       // Pointer to the token data
       // Dimensions: [num_tokens][hidden]
@@ -119,8 +107,8 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
           reinterpret_cast<uint8_t*>(rdma_x_src_idx) + sizeof(int));
 
       // Each warp processes different top-k experts for the same token
-      const int64_t dst_expert_idx = warp_id < num_topk ?
-          static_cast<int64_t>(topk_idx[token_idx * num_topk + warp_id]) : -1;
+      const int64_t dst_expert_idx = wave_id < num_topk ?
+          static_cast<int64_t>(topk_idx[token_idx * num_topk + wave_id]) : -1;
 
       // thread 0 in the warp writes the source token index
       thread_id == 0 ? (*(rdma_x_src_idx) = token_idx) : 0;
@@ -170,28 +158,28 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
       }
     }
   }
-  if (warp_id == num_warps - 1) {
+  if (wave_id == num_waves - 1) {
     if (wg_id == 0) {
       // The first WG is also responsible for cleaning the next buffer
-      for (int i = lane_id; i < num_next_clean_int; i += kWarpSize)
+      for (int i = lane_id; i < num_next_clean_int; i += kWaveSize)
         next_clean[i] = 0;
-      // Whis is this required ..?
-      for (int i = lane_id; i < num_experts; i += kWarpSize) {
+      for (int i = lane_id; i < num_experts; i += kWaveSize) {
         __hip_atomic_fetch_add(atomic_finish_counter_per_expert + i,
                                FINISHED_SUM_TAG, __ATOMIC_RELEASE,
                                __HIP_MEMORY_SCOPE_AGENT);
       }
     }
     /**
-     * Each work group is responsible for some destination experts, read `topk_idx` for them
-     * and count the number of tokens sent to those experts
+     * Each work group is responsible for some destination experts,
+     * read `topk_idx` for them and count the number of tokens sent
+     * to those experts
      */
-    int expert_count[kNumWarpGroups] = {0};
-    const int expert_begin_idx = wg_id * kNumWarpGroups;
-    const int expert_end_idx = min(expert_begin_idx + kNumWarpGroups, num_experts);
+    int expert_count[kNumWaveGroups] = {0};
+    const int expert_begin_idx = wg_id * kNumWaveGroups;
+    const int expert_end_idx = min(expert_begin_idx + kNumWaveGroups, num_experts);
 
     // Per lane count
-    for (int i = lane_id; i < num_tokens * num_topk; i += kWarpSize) {
+    for (int i = lane_id; i < num_tokens * num_topk; i += kWaveSize) {
       const int64_t idx = static_cast<int64_t>(topk_idx[i]);
       if (idx >= expert_begin_idx && idx < expert_end_idx) {
         expert_count[idx - expert_begin_idx]++;
@@ -213,12 +201,12 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
   __syncthreads();
 
   // Notify each expert about the number of tokens sent to it
-  if (responsible_expert_id < num_experts && sub_warp_id == 0 && lane_id == 0) {
+  if (responsible_expert_id < num_experts && sub_wave_id == 0 && lane_id == 0) {
     const int dst_rank = responsible_expert_id / num_local_experts;
     const int dst_expert_local_idx = responsible_expert_id % num_local_experts;
     const int num_tokens_sent =
         shared_num_tokens_sent_per_expert[responsible_expert_id -
-                                          wg_id * kNumWarpGroups];
+                                          wg_id * kNumWaveGroups];
 
     // Wait until all tokens have been sent and counted
     while(__hip_atomic_load(atomic_finish_counter_per_expert + responsible_expert_id,
@@ -230,7 +218,6 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
           rdma_recv_count + dst_expert_local_idx * num_ranks + rank,
           -num_tokens_sent - 1, dst_rank);
     } else {
-      // Local store for same-rank communication
       /**
        * Local store for same-rank communication
        * TODO: Does it require atomic store? each store is to a unique location
@@ -251,7 +238,8 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
   warp_sync();
 
   /**
-   * TODO: Add SEND and RECV phase flags to control the synchronization
+   * Grid barrier to ensure all WGs have completed sending
+   * All WGs must be co-resident for this to work correctly
    */
   grid_barrier(global_atomic_counter, num_wgs);
 
@@ -288,16 +276,15 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
         packed_recv_layout_range + local_expert_idx * num_ranks;
 
     // Shared between sub-warps in warp groups
-    // Why is this required..?
-    __shared__ int shared_num_recv_tokens[kNumWarpGroups],
-                   shared_recv_token_begin_idx[kNumWarpGroups];
+    __shared__ int shared_num_recv_tokens[kNumWaveGroups],
+                   shared_recv_token_begin_idx[kNumWaveGroups];
 
     /**
      * Wait until tokens are received for the assigned local expert
      * from its source rank
      */
     int num_recv_tokens, recv_token_begin_idx;
-    if (sub_warp_id == 0 && lane_id == 0) {
+    if (sub_wave_id == 0 && lane_id == 0) {
       while ((num_recv_tokens = __hip_atomic_load(
                   reinterpret_cast<int*>(rdma_recv_count + local_expert_idx *
                                          num_ranks + src_rank),
@@ -314,8 +301,8 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
       recv_token_begin_idx = atomicAdd(packed_recv_count + local_expert_idx,
                                        num_recv_tokens);
       // Store the info in the shared buffer for other sub-warps in the warp group
-      shared_num_recv_tokens[warp_group_id] = num_recv_tokens;
-      shared_recv_token_begin_idx[warp_group_id] = recv_token_begin_idx;
+      shared_num_recv_tokens[wave_group_id] = num_recv_tokens;
+      shared_recv_token_begin_idx[wave_group_id] = recv_token_begin_idx;
       // Pack the recv range info
       packed_recv_layout_range_ptr[src_rank] =
           (static_cast<int64_t>(recv_token_begin_idx) << 32) |
@@ -323,10 +310,10 @@ void dispatch_kernel(void *packed_recv_x, int *packed_recv_src_info,
     }
     // Synchronize sub-warps in the warp group
     __syncthreads();
-    num_recv_tokens = shared_num_recv_tokens[warp_group_id];
-    recv_token_begin_idx = shared_recv_token_begin_idx[warp_group_id];
+    num_recv_tokens = shared_num_recv_tokens[wave_group_id];
+    recv_token_begin_idx = shared_recv_token_begin_idx[wave_group_id];
     // Pack the received data from rdma_recv_x to packed_recv_x
-    for (int i = sub_warp_id; i < num_recv_tokens; i += kNumWarpsPerGroup) {
+    for (int i = sub_wave_id; i < num_recv_tokens; i += kNumWavesPerGroup) {
       // Source token index in rdma_recv_x
       const int* const src_token_idx = reinterpret_cast<int*>(
           reinterpret_cast<uint8_t*>(rdma_recv_x_ptr) +
@@ -357,26 +344,23 @@ void dispatch(void *packed_recv_x, int* packed_recv_src_info,
     void* rdma_x, const void* x, const int64_t* topk_idx,
     int64_t* next_clean, int num_next_clean_int, int num_tokens, int hidden,
     int num_topk, int num_experts, int rank, int num_ranks,
-    void* workspace) {
-  constexpr int kNumWarpsPerGroup = 4;
-  constexpr int kNumWarpGroups = 4;
+    void* workspace, hipStream_t stream) {
+  constexpr int kNumWavesPerGroup = 4;
+  constexpr int kNumWaveGroups = 4;
 
   constexpr int kNumMaxTopK = 9;
-  // TODO: Add assertions to check that kNumMaxTopK + 1 <= kNumWarpGroups * kNumWarpsPerGroup
-  ASSERT(kNumMaxTopK + 1 <= kNumWarpsPerGroup * kNumWarpGroups);
+  ASSERT(kNumMaxTopK + 1 <= kNumWavesPerGroup * kNumWaveGroups);
 
-  const auto num_warps   = kNumWarpGroups * kNumWarpsPerGroup;
-  const auto num_wgs     = cell_div(num_experts, kNumWarpGroups);
-  const auto num_threads = num_warps * kWarpSize;
-  
-  // TODO: Add assertions to check num_topk <= kNumMaxTopK
+  const auto num_waves   = kNumWaveGroups * kNumWavesPerGroup;
+  const auto num_wgs     = cell_div(num_experts, kNumWaveGroups);
+  const auto num_threads = num_waves * kWaveSize;
+
   ASSERT(num_topk <= kNumMaxTopK);
 
   // Workspace checks
   int* atomic_counter_per_expert = reinterpret_cast<int*>(workspace);
   int* atomic_finish_counter_per_expert = atomic_counter_per_expert + num_experts;
 
-  // TODO: Update the assert
   ASSERT(num_experts * sizeof(int) * 2 <= NUM_WORKSPACE_BYTES);
 
   dim3 grid(num_wgs);
@@ -389,7 +373,7 @@ void dispatch(void *packed_recv_x, int* packed_recv_src_info,
   int max_co_resident_wgs_per_cu = 0;
   CHECK_HIP(hipOccupancyMaxActiveBlocksPerMultiprocessor(
       &max_co_resident_wgs_per_cu,
-      dispatch_kernel<kNumWarpsPerGroup, kNumWarpGroups, T>,
+      dispatch_kernel<kNumWavesPerGroup, kNumWaveGroups, T>,
       num_threads,
       0));
   // Get the number of compute units
@@ -398,31 +382,24 @@ void dispatch(void *packed_recv_x, int* packed_recv_src_info,
   const int num_cus = device_prop.multiProcessorCount;
   const int max_sustainable_wgs = max_co_resident_wgs_per_cu * num_cus;
 
-  // printf for debugging
-  std::cout << "Max co-resident WGs per CU: " << max_co_resident_wgs_per_cu
-            << ", Num CUs: " << num_cus
-            << ", Max sustainable WGs: " << max_sustainable_wgs << std::endl;
+  // Print warning if num_wgs exceeds max co-resident work-groups
+  if (num_wgs > max_sustainable_wgs) {
+    std::cout << "Warning: Number of work-groups (" << num_wgs
+              << ") exceeds max sustainable work-groups ("
+              << max_sustainable_wgs << ")." << std::endl;
+  }
 
-  std::cout << "Launching dispatch kernel with grid (" << grid.x << ", "
-            << grid.y << ", " << grid.z << ") and block (" << block.x
-            << ", " << block.y << ", " << block.z << ")\n"
-            << ", num_warps: " << num_warps << ", num_wgs: " << num_wgs
-            << ", num_threads: " << num_threads
-            << ", kNumWarpsPerGroup: " << kNumWarpsPerGroup
-            << ", kNumWarpGroups: " << kNumWarpGroups << std::endl;
-
-  dispatch_kernel<kNumWarpsPerGroup, kNumWarpGroups, T><<<grid, block>>>(
-      packed_recv_x, packed_recv_src_info, packed_recv_layout_range,
-      packed_recv_count, global_atomic_counter, rdma_recv_x,
-      rdma_recv_count, rdma_x, x, topk_idx, atomic_counter_per_expert,
+  dispatch_kernel<kNumWavesPerGroup, kNumWaveGroups, T>
+    <<<grid, block, 0, stream>>>(packed_recv_x, packed_recv_src_info,
+      packed_recv_layout_range, packed_recv_count, global_atomic_counter,
+      rdma_recv_x, rdma_recv_count, rdma_x, x, topk_idx, atomic_counter_per_expert,
       atomic_finish_counter_per_expert, next_clean, num_next_clean_int,
       num_tokens, hidden, num_topk, num_experts, rank, num_ranks);
-
 }
 
 // Combine kernel for low-latency deepEP
-template <int kNumWarpsPerGroup, int kNumWarpGroups, typename T>
-__global__ __launch_bounds__(kNumWarpsPerGroup * kNumWarpGroups * kWarpSize, 1)
+template <int kNumWavesPerGroup, int kNumWaveGroups, int kNumMaxTopK, typename T>
+__global__ __launch_bounds__(kNumWavesPerGroup * kNumWaveGroups * kWaveSize, 1)
 void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
     void* rdma_send_x, const void* x, const int64_t* topk_idx,
     const int* src_info, const int64_t* layout_range,
@@ -431,15 +408,15 @@ void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
     int num_experts, int rank, int num_ranks) {
   const int wg_id = static_cast<int>(blockIdx.x);
   const int thread_id = static_cast<int>(threadIdx.x);
-  const int warp_id = thread_id / kWarpSize;
+  const int wave_id = thread_id / kWaveSize;
   const int num_wgs = static_cast<int>(gridDim.x);
   const int num_threads = static_cast<int>(blockDim.x);
-  const int lane_id = thread_id % kWarpSize;
-  constexpr int num_warps = kNumWarpsPerGroup * kNumWarpGroups;
+  const int lane_id = thread_id % kWaveSize;
+  constexpr int num_waves = kNumWavesPerGroup * kNumWaveGroups;
   const int num_local_experts = num_experts / num_ranks;
-  const int warp_group_id = warp_id / kNumWarpsPerGroup;
-  const int sub_warp_id = warp_id % kNumWarpsPerGroup;
-  const int responsible_expert_id = wg_id * kNumWarpGroups + warp_group_id;
+  const int wave_group_id = wave_id / kNumWavesPerGroup;
+  const int sub_wave_id = wave_id % kNumWavesPerGroup;
+  const int responsible_expert_id = wg_id * kNumWaveGroups + wave_group_id;
 
   // size of each slot in bytes
   const size_t num_bytes_per_slot = sizeof(int) + static_cast<size_t>(hidden) *
@@ -456,35 +433,20 @@ void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
   }
   __syncthreads();
 
-  /**
-   * TODO: Assert if sizeof(int) % sizeof(T) != 0
-   */
-
-  /**
-   * TODO: Skip the sending phase based on the phase flag
-   */
-  // printf for debugging
-  if (thread_id == 0 && wg_id == 0) {
-    printf("Combine Kernel: num_wgs: %d, num_warps: %d, hidden: %d, "
-           "(bytes per slot: %ld, num_T per slot: %ld), num_tokens: %d, "
-           "num_topk: %d, num_experts: %d, rank: %d, num_ranks: %d\n",
-           num_wgs, num_warps, hidden, num_bytes_per_slot, num_T_per_slot,
-           num_tokens, num_topk, num_experts, rank, num_ranks);
-  }
+  DEVICE_ASSERT(sizeof(int) % sizeof(T) == 0);
 
   // Clean up next buffer
-  if (wg_id == 0 && warp_group_id == 0 && sub_warp_id == 0) {
-    for (int i = lane_id; i < num_next_clean_int; i += kWarpSize)
+  if (wg_id == 0 && wave_group_id == 0 && sub_wave_id == 0) {
+    for (int i = lane_id; i < num_next_clean_int; i += kWaveSize)
       next_clean[i] = 0;
 
     warp_sync();
-    // Why is this required..?
     if (lane_id == 0)
       __hip_atomic_fetch_add(atomic_clean_flag, num_experts,
                              __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
   }
 
-  // Issue IBGDA sends
+  // Issue rocSHMEM puts
   if (responsible_expert_id < num_experts) {
     const int dst_rank = responsible_expert_id / num_local_experts;
     const int local_expert_idx = responsible_expert_id % num_local_experts;
@@ -502,16 +464,9 @@ void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
     const int num_tokens_to_send = reinterpret_cast<const int*>(layout_info)[0];
     const int offset             = reinterpret_cast<const int*>(layout_info)[1];
 
-    // Print for debugging
-    // if (sub_warp_id == 0 && lane_id == 0) {
-    //   printf("Combine Kernel: Expert: %d, global idx: %d, local idx: %d "
-    //          " rank: %d tokens: %d, offset: %d, sub_warp_id: %d, warp_grp_id: %d\n",
-    //          responsible_expert_id, global_expert_idx, local_expert_idx,
-    //          dst_rank, num_tokens_to_send, offset, sub_warp_id, warp_group_id);
-    // }
-    // Issue IBGDA sends
-    for (int token_idx = offset + sub_warp_id; token_idx < offset + num_tokens_to_send;
-         token_idx += kNumWarpGroups) {
+    // Issue rocSHMEM puts
+    for (int token_idx = offset + sub_wave_id; token_idx < offset + num_tokens_to_send;
+         token_idx += kNumWaveGroups) {
       const T* const x_ptr = local_x + token_idx * hidden;
       int* const rdma_send_x_tkn_idx = reinterpret_cast<int*>(
           rdma_send_x_ptr + token_idx * num_T_per_slot);
@@ -529,19 +484,6 @@ void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
                          (global_expert_idx * num_tokens + src_token_idx) *
                          num_T_per_slot + sizeof(int)/sizeof(T);
 
-      // // Print for debugging
-      // if (lane_id == 0) {
-      //   printf("Expert: %d, global idx: %d, local idx: %d, Rank: %d, "
-      //          " Token: %d / %d (%d), (src idx: %d),  x_ptr: %p, buf_ptr: %p, "
-      //          " Sub_warp_id: %d, warp_grp_id: %d, ptr_diff: %ld, (%ld, %ld)\n",
-      //          responsible_expert_id, global_expert_idx, local_expert_idx,
-      //          dst_rank, token_idx, num_tokens_to_send, offset, src_token_idx, x_ptr, buf_ptr,
-      //          sub_warp_id, warp_group_id, (uint8_t*)rdma_recv_x - (uint8_t*)dst_ptr,
-      //          (global_expert_idx * num_tokens * src_token_idx) * num_bytes_per_slot +
-      //          sizeof(int), (global_expert_idx * num_tokens * src_token_idx) *
-      //          num_T_per_slot + sizeof(int)/sizeof(T));
-      // }
-
       if (dst_rank == rank) {
         // Local copy for same-rank communication
         // Write the token index
@@ -558,13 +500,13 @@ void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
     // Synchronize sub-warps in the warp group
     if (lane_id == 0) {
       volatile int ret = __hip_atomic_fetch_add(
-          &sync_large_warp_counters[warp_group_id], 1,
+          &sync_large_warp_counters[wave_group_id], 1,
           __ATOMIC_RELEASE, __HIP_MEMORY_SCOPE_AGENT);
       warp_sync();
-      while (sync_large_warp_counters[warp_group_id] < kNumWarpsPerGroup);
+      while (sync_large_warp_counters[wave_group_id] < kNumWavesPerGroup);
     }
 
-    if (sub_warp_id == 0 && lane_id == 0) {
+    if (sub_wave_id == 0 && lane_id == 0) {
       //
       while (__hip_atomic_load(atomic_clean_flag, __ATOMIC_ACQUIRE,
                                __HIP_MEMORY_SCOPE_AGENT) == 0);
@@ -584,14 +526,40 @@ void combine_kernel(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
   }
 
   // Wait until data is received for the assigned expert
-  if (responsible_expert_id < num_experts && sub_warp_id == 0 && lane_id == 0) {
+  if (responsible_expert_id < num_experts && sub_wave_id == 0 && lane_id == 0) {
     while (__hip_atomic_load(rdma_recv_flag + responsible_expert_id,
                              __ATOMIC_ACQUIRE, __HIP_MEMORY_SCOPE_AGENT) == 0);
   }
 
-  // Grid barrier to ensure all WGs have completed receiving
+  /**
+   * Grid barrier to ensure all WGs have completed receiving
+   * All WGs must be co-resident for this to work correctly
+   */
   grid_barrier(global_atomic_counter, num_wgs);
 
+  // Pack the data from rdma_recv_x to combined_x
+  // Each wg is assigned a token to process
+  for (int token_idx = wg_id; token_idx < num_tokens; token_idx += num_wgs) {
+    // Read top-k expert indices for the token
+    int reg_topk_idx[kNumMaxTopK];
+    for (int k = 0; k < num_topk; ++k) {
+      reg_topk_idx[k] = static_cast<int>(topk_idx[token_idx * num_topk + k]);
+    }
+
+    // Combine the data from the top-k experts
+    for (int i = thread_id; i < hidden; i += num_threads) {
+      // Iterate over top-k experts
+      for (int k = 0; k < num_topk; ++k) if (reg_topk_idx[k] >= 0) {
+        int* const rdma_recv_x_tkn_idx = reinterpret_cast<int*>(
+            reinterpret_cast<uint8_t*>(rdma_recv_x) +
+            (reg_topk_idx[k] * num_tokens + token_idx) * num_bytes_per_slot);
+        T* const rdma_recv_x_tkn_data = reinterpret_cast<T*>(
+            rdma_recv_x_tkn_idx + 1);
+        // Reduce the token data
+        combined_x[token_idx * hidden + i] += rdma_recv_x_tkn_data[i];
+      }
+    }
+  }
 }
 
 // Combine function to launch the combine kernel
@@ -601,20 +569,20 @@ void combine(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
     const int* src_info, const int64_t* layout_range,
     int* global_atomic_counter, int64_t* next_clean, int num_next_clean_int,
     int num_tokens, int num_topk, int hidden, int num_experts, int rank,
-    int num_ranks, void* workspace) {
+    int num_ranks, void* workspace, hipStream_t stream) {
 
-  constexpr int kNumWarpsPerGroup = 4;
-  constexpr int kNumWarpGroups = 4;
+  constexpr int kNumWavesPerGroup = 4;
+  constexpr int kNumWaveGroups = 4;
 
   constexpr int kNumMaxTopK = 9;
-  // TODO: Add assertions
+  ASSERT(num_topk <= kNumMaxTopK);
 
-  const auto num_warps   = kNumWarpGroups * kNumWarpsPerGroup;
-  const auto num_wgs     = cell_div(num_experts, kNumWarpGroups);
-  const auto num_threads = num_warps * kWarpSize;
+  const auto num_waves   = kNumWaveGroups * kNumWavesPerGroup;
+  const auto num_wgs     = cell_div(num_experts, kNumWaveGroups);
+  const auto num_threads = num_waves * kWaveSize;
 
   int* atomic_clean_flag = reinterpret_cast<int*>(workspace);
-  // TODO: Add assertions to check workspace size
+  ASSERT(sizeof(int) <= NUM_WORKSPACE_BYTES);
 
   dim3 grid(num_wgs);
   dim3 block(num_threads);
@@ -626,7 +594,7 @@ void combine(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
   int max_co_resident_wgs_per_cu = 0;
   CHECK_HIP(hipOccupancyMaxActiveBlocksPerMultiprocessor(
       &max_co_resident_wgs_per_cu,
-      combine_kernel<kNumWarpsPerGroup, kNumWarpGroups, T>,
+      combine_kernel<kNumWavesPerGroup, kNumWaveGroups, kNumMaxTopK, T>,
       num_threads,
       0));
   // Get the number of compute units
@@ -635,26 +603,18 @@ void combine(T* combined_x, void* rdma_recv_x, int64_t* rdma_recv_flag,
   const int num_cus = device_prop.multiProcessorCount;
   const int max_sustainable_wgs = max_co_resident_wgs_per_cu * num_cus;
 
-  // printf for debugging
-  std::cout << "Max co-resident WGs per CU: " << max_co_resident_wgs_per_cu
-            << ", Num CUs: " << num_cus
-            << ", Max sustainable WGs: " << max_sustainable_wgs << std::endl;
+  // Print warning if num_wgs exceeds max co-resident work-groups
+  if (num_wgs > max_sustainable_wgs) {
+    std::cout << "Warning: Number of work-groups (" << num_wgs
+              << ") exceeds max sustainable work-groups ("
+              << max_sustainable_wgs << ")." << std::endl;
+  }
 
-  std::cout << "Launching combine kernel with grid (" << grid.x << ", "
-            << grid.y << ", " << grid.z << ") and block (" << block.x
-            << ", " << block.y << ", " << block.z << ")\n"
-            << ", num_warps: " << num_warps << ", num_wgs: " << num_wgs
-            << ", num_threads: " << num_threads
-            << ", kNumWarpsPerGroup: " << kNumWarpsPerGroup
-            << ", kNumWarpGroups: " << kNumWarpGroups << std::endl;
-
-  combine_kernel<kNumWarpsPerGroup, kNumWarpGroups, T><<<grid, block>>>(
-      combined_x, rdma_recv_x, rdma_recv_flag, rdma_send_x, x, topk_idx,
-      src_info, layout_range, global_atomic_counter, next_clean,
-      num_next_clean_int, atomic_clean_flag, num_tokens, num_topk, hidden,
-      num_experts, rank, num_ranks);
+  combine_kernel<kNumWavesPerGroup, kNumWaveGroups, kNumMaxTopK, T>
+    <<<grid, block, 0, stream>>>(combined_x, rdma_recv_x, rdma_recv_flag,
+      rdma_send_x, x, topk_idx, src_info, layout_range, global_atomic_counter,
+      next_clean, num_next_clean_int, atomic_clean_flag, num_tokens, num_topk,
+      hidden, num_experts, rank, num_ranks);
 
 }
-
-
 }  // namespace ll_kernels

@@ -63,9 +63,6 @@ class LLData {
     int gpu_id {0};
     CHECK_HIP(hipGetDevice(&gpu_id));
 
-    // print GPU id
-    std::cout << "Generating data on GPU " << gpu_id << std::endl;
-
     data_kernel<<<blocks_per_grid, threads_per_block>>>(X, hidden, gpu_id);
     CHECK_HIP(hipDeviceSynchronize());
 
@@ -151,10 +148,6 @@ class LLData {
     std::vector<int64_t> h_topk_idx(topk_idx_size);
     std::vector<int> expert_indices(num_experts);
 
-    /**
-     * TODO: use simple rand() function and make sure unique experts are chosen
-     * for each token
-     */
     std::random_device rd;
     std::mt19937 gen(rd());
 
@@ -169,9 +162,6 @@ class LLData {
         expert_token_count[expert_indices[k]]++;
       }
     }
-    /**
-     * TODO: is the hipmemcpy required here? can topk_idx be accessed directly on host?
-     */
     CHECK_HIP(hipMemcpy(topk_idx, h_topk_idx.data(),
                         topk_idx_size * sizeof(int64_t), hipMemcpyHostToDevice));
   }
@@ -187,9 +177,6 @@ class LLData {
         expert_token_count[h_topk_idx[i * num_topk + k]]++;
       }
     }
-    /**
-     * TODO: is the hipmemcpy required here? can topk_idx be accessed directly on host?
-     */
     CHECK_HIP(hipMemcpy(topk_idx, h_topk_idx.data(),
                         topk_idx_size * sizeof(int64_t), hipMemcpyHostToDevice));
   }
